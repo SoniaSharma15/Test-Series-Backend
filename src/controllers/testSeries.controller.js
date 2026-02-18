@@ -106,10 +106,22 @@ export const deleteTestSeries = async (req, res) => {
 export const getAllTestSeries = async (req, res) => {
   try {
     const userId = req.user?._id;
+    const now = new Date();
 
     const seriesList = await TestSeries.find()
       .sort({ createdAt: -1 })
       .lean();
+
+    // 🔥 Filter expired series based on duration
+    const activeSeries = seriesList.filter((series) => {
+      if (!series.startDate || !series.duration) return true;
+
+      const start = new Date(series.startDate);
+      const expiry = new Date(start);
+      expiry.setDate(expiry.getDate() + series.duration);
+
+      return now <= expiry;
+    });
 
     let enrolledSet = new Set();
 
@@ -119,17 +131,13 @@ export const getAllTestSeries = async (req, res) => {
       }).select("testSeriesId");
 
       enrolledSet = new Set(
-        enrollments.map((e) =>
-          e.testSeriesId.toString()
-        )
+        enrollments.map((e) => e.testSeriesId.toString())
       );
     }
 
-    const updated = seriesList.map((series) => ({
+    const updated = activeSeries.map((series) => ({
       ...series,
-      isEnrolled: enrolledSet.has(
-        series._id.toString()
-      ),
+      isEnrolled: enrolledSet.has(series._id.toString()),
     }));
 
     res.json(updated);
@@ -138,6 +146,7 @@ export const getAllTestSeries = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
 
 
 

@@ -9,26 +9,54 @@ export const getStudentDashboard = async (req, res) => {
     }
 
     const studentId = req.user._id;
+    const now = new Date();
 
-    // 1️⃣ Active Enrollments
-    const activeEnrollments = await Enrollment.find({
+    /* =====================================================
+       1️⃣ FETCH ENROLLMENTS
+    ===================================================== */
+
+    const enrollments = await Enrollment.find({
       studentId,
       status: "active",
       accessGranted: true,
     }).populate("testSeriesId");
 
-    const activeSeriesIds = activeEnrollments
-      .filter((e) => e.testSeriesId)
-      .map((e) => e.testSeriesId._id);
+    /* =====================================================
+       2️⃣ FILTER EXPIRED SERIES (STARTDATE + DURATION)
+       🔥 SAME LOGIC AS getAllTestSeries
+    ===================================================== */
 
-    // 2️⃣ Tests of Active Series
+    const activeEnrollments = enrollments.filter((enrollment) => {
+      const series = enrollment.testSeriesId;
+      if (!series) return false;
+
+      if (!series.startDate || !series.duration) return true;
+
+      const start = new Date(series.startDate);
+      const expiry = new Date(start);
+      expiry.setDate(expiry.getDate() + series.duration);
+
+      return now <= expiry;
+    });
+
+    const activeSeriesIds = activeEnrollments.map(
+      (e) => e.testSeriesId._id
+    );
+
+    /* =====================================================
+       3️⃣ FETCH TESTS
+    ===================================================== */
+
     const activeTests = await Test.find({
       testSeriesId: { $in: activeSeriesIds },
     });
 
     const activeTestIds = activeTests.map((t) => t._id);
 
-    // 3️⃣ Attempts
+    /* =====================================================
+       4️⃣ FETCH ATTEMPTS
+    ===================================================== */
+
     const attempts = await Attempt.find({
       studentId,
       testId: { $in: activeTestIds },
@@ -37,9 +65,9 @@ export const getStudentDashboard = async (req, res) => {
 
     const totalAttempts = attempts.length;
 
-    // =========================
-    // 📊 GLOBAL CALCULATIONS
-    // =========================
+    /* =====================================================
+       📊 GLOBAL STATS
+    ===================================================== */
 
     let totalScore = 0;
     let highestScore = 0;
@@ -70,79 +98,78 @@ export const getStudentDashboard = async (req, res) => {
 
     const round2 = (num) => Math.round(num * 100) / 100;
 
-    // =========================
-    // 🎯 SMART SERIES DATA
-    // =========================
+    /* =====================================================
+       🎯 SERIES DATA
+    ===================================================== */
 
-    const smartSeries = activeEnrollments
-      .filter((enrollment) => enrollment.testSeriesId)
-      .map((enrollment) => {
-        const seriesId = enrollment.testSeriesId._id;
+    const smartSeries = activeEnrollments.map((enrollment) => {
+      const series = enrollment.testSeriesId;
+      const seriesId = series._id;
 
-        const seriesTests = activeTests.filter(
-          (t) =>
-            t.testSeriesId.toString() === seriesId.toString()
+      const seriesTests = activeTests.filter(
+        (t) =>
+          t.testSeriesId.toString() === seriesId.toString()
+      );
+
+      const seriesTestIds = seriesTests.map((t) =>
+        t._id.toString()
+      );
+
+      const seriesAttempts = attempts.filter((a) =>
+        seriesTestIds.includes(a.testId.toString())
+      );
+
+      const totalTests = seriesTests.length;
+      const attemptedTests = seriesAttempts.length;
+      const pendingTests = totalTests - attemptedTests;
+
+      const progress =
+        totalTests > 0
+          ? Math.round((attemptedTests / totalTests) * 100)
+          : 0;
+
+      /* 🔥 Same Expiry Calculation */
+
+      let expiryDate = null;
+
+      if (series.startDate && series.duration) {
+        const start = new Date(series.startDate);
+        expiryDate = new Date(start);
+        expiryDate.setDate(
+          expiryDate.getDate() + series.duration
         );
+      }
 
-        const seriesTestIds = seriesTests.map((t) =>
-          t._id.toString()
-        );
+      return {
+        _id: seriesId,
+        title: series.title,
+        expiryDate,
+        totalTests,
+        attemptedTests,
+        pendingTests,
+        progress,
+      };
+    });
 
-        const seriesAttempts = attempts.filter((a) =>
-          seriesTestIds.includes(a.testId.toString())
-        );
-
-        const totalTests = seriesTests.length;
-        const attemptedTests = seriesAttempts.length;
-        const pendingTests = totalTests - attemptedTests;
-
-        const progress =
-          totalTests > 0
-            ? Math.round((attemptedTests / totalTests) * 100)
-            : 0;
-
-        const durationDays =
-          enrollment.testSeriesId?.duration || 0;
-
-        let calculatedExpiry = null;
-
-        if (durationDays > 0 && enrollment.purchaseDate) {
-          calculatedExpiry = new Date(enrollment.purchaseDate);
-          calculatedExpiry.setDate(
-            calculatedExpiry.getDate() + durationDays
-          );
-        }
-
-        return {
-          _id: seriesId,
-          title: enrollment.testSeriesId.title,
-          expiryDate: calculatedExpiry,
-          totalTests,
-          attemptedTests,
-          pendingTests,
-          progress,
-        };
-      });
-
-    // =========================
-    // 📈 Performance Graph
-    // =========================
+    /* =====================================================
+       📈 PERFORMANCE GRAPH
+    ===================================================== */
 
     const performanceGraphData = attempts
       .slice(0, 10)
       .reverse()
       .map((a) => ({
-        score: round2(a.score),
+        score: round2(a.score || 0),
         date: a.submittedAt,
       }));
 
-    // =========================
-    // 🚀 RESPONSE
-    // =========================
+    /* =====================================================
+       🚀 RESPONSE
+    ===================================================== */
 
     res.json({
       studentName: req.user.name,
-      studentId: req.user._id,
+      studentId,
 
       enrolledSeries: smartSeries,
 
@@ -158,6 +185,7 @@ export const getStudentDashboard = async (req, res) => {
     });
 
   } catch (error) {
+    console.error("Dashboard Error:", error);
     res.status(500).json({
       message: error.message,
     });
