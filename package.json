@@ -23,12 +23,7 @@
     "mongoose": "^9.2.1",
     "multer": "^2.0.2",
     "nodemailer": "^8.0.1",
-<<<<<<< HEAD
     "pdfkit": "^0.17.2",
-    "puppeteer": "^24.37.3",
-=======
-    "playwright": "^1.58.2",
->>>>>>> 9a34fba00782953920ea37f9244a28f3a4943fbe
     "razorpay": "^2.9.6"
   },
   "devDependencies": {
