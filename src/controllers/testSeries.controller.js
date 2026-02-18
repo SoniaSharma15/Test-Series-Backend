@@ -106,17 +106,12 @@ export const deleteTestSeries = async (req, res) => {
 export const getAllTestSeries = async (req, res) => {
   try {
     const userId = req.user?._id;
-<<<<<<< HEAD
-=======
     const now = new Date();
->>>>>>> 9a34fba00782953920ea37f9244a28f3a4943fbe
 
     const seriesList = await TestSeries.find()
       .sort({ createdAt: -1 })
       .lean();
 
-<<<<<<< HEAD
-=======
     // 🔥 Filter expired series based on duration
     const activeSeries = seriesList.filter((series) => {
       if (!series.startDate || !series.duration) return true;
@@ -128,7 +123,6 @@ export const getAllTestSeries = async (req, res) => {
       return now <= expiry;
     });
 
->>>>>>> 9a34fba00782953920ea37f9244a28f3a4943fbe
     let enrolledSet = new Set();
 
     if (userId) {
@@ -137,19 +131,6 @@ export const getAllTestSeries = async (req, res) => {
       }).select("testSeriesId");
 
       enrolledSet = new Set(
-<<<<<<< HEAD
-        enrollments.map((e) =>
-          e.testSeriesId.toString()
-        )
-      );
-    }
-
-    const updated = seriesList.map((series) => ({
-      ...series,
-      isEnrolled: enrolledSet.has(
-        series._id.toString()
-      ),
-=======
         enrollments.map((e) => e.testSeriesId.toString())
       );
     }
@@ -157,7 +138,6 @@ export const getAllTestSeries = async (req, res) => {
     const updated = activeSeries.map((series) => ({
       ...series,
       isEnrolled: enrolledSet.has(series._id.toString()),
->>>>>>> 9a34fba00782953920ea37f9244a28f3a4943fbe
     }));
 
     res.json(updated);
@@ -169,10 +149,6 @@ export const getAllTestSeries = async (req, res) => {
 
 
 
-<<<<<<< HEAD
-=======
-
->>>>>>> 9a34fba00782953920ea37f9244a28f3a4943fbe
 export const getSingleTestSeries = async (req, res) => {
   try {
     const data = await TestSeries.findById(req.params.id);

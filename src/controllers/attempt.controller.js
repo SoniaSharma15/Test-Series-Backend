@@ -12,26 +12,6 @@ export const startAttempt = async (req, res) => {
     if (!test)
       return res.status(404).json({ message: "Test not found" });
 
-<<<<<<< HEAD
-    /* Prevent multiple active attempts */
-    const activeAttempt = await Attempt.findOne({
-      studentId,
-      testId,
-      status: "IN_PROGRESS",
-    });
-
-    if (activeAttempt) {
-  return res.status(200).json({
-    attemptId: activeAttempt._id,
-  });
-}
-
-
-    const previousAttempts = await Attempt.countDocuments({
-      studentId,
-      testId,
-    });
-=======
     // ❌ Prevent ANY previous attempt
     const existingAttempt = await Attempt.findOne({
       studentId,
@@ -45,18 +25,12 @@ export const startAttempt = async (req, res) => {
         alreadyAttempted: true,
       });
     }
->>>>>>> 9a34fba00782953920ea37f9244a28f3a4943fbe
 
     const newAttempt = await Attempt.create({
       studentId,
       testId,
-<<<<<<< HEAD
-      attemptNumber: previousAttempts + 1,
-      duration: test.duration, // LOCK duration
-=======
       attemptNumber: 1,
       duration: test.duration,
->>>>>>> 9a34fba00782953920ea37f9244a28f3a4943fbe
       ipAddress: req.ip,
       userAgent: req.headers["user-agent"],
       lastHeartbeat: new Date(),
@@ -72,10 +46,6 @@ export const startAttempt = async (req, res) => {
 };
 
 
-<<<<<<< HEAD
-=======
-
->>>>>>> 9a34fba00782953920ea37f9244a28f3a4943fbe
 export const getPerformance = async (req, res) => {
   try {
     const studentId = req.user._id;
