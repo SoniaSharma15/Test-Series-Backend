@@ -234,20 +234,40 @@ export const submitAttempt = async (req, res) => {
         (a) => a.questionId.toString() === q._id.toString()
       );
 
-      if (!studentAnswer || !studentAnswer.selectedAnswer) return;
+      // ✅ Check if answer exists based on question type
+      let hasAnswer = false;
+      if (q.type === "MSQ") {
+        hasAnswer = studentAnswer && Array.isArray(studentAnswer.selectedAnswers) && studentAnswer.selectedAnswers.length > 0;
+      } else {
+        hasAnswer = studentAnswer && studentAnswer.selectedAnswer;
+      }
+
+      if (!hasAnswer) return;
 
       attemptedCount++;
 
-      if (
-        q.type !== "THEORETICAL" &&
-        studentAnswer.selectedAnswer === q.correctAnswer
-      ) {
+      let isCorrect = false;
+
+      if (q.type === "MSQ") {
+        // ✅ For MSQ: check if all selected answers match correctAnswers
+        const correctSet = new Set(
+          Array.isArray(q.correctAnswers) ? q.correctAnswers : []
+        );
+        const selectedSet = new Set(studentAnswer.selectedAnswers || []);
+
+        // All correct answers must be selected AND no extra answers
+        isCorrect =
+          correctSet.size === selectedSet.size &&
+          Array.from(correctSet).every((ans) => selectedSet.has(ans));
+      } else if (q.type !== "THEORETICAL" && q.type !== "PASSAGE") {
+        // ✅ For MCQ/MATH/AR: check single answer
+        isCorrect = studentAnswer.selectedAnswer === q.correctAnswer;
+      }
+
+      if (isCorrect) {
         score += q.marks;
         correctCount++;
-      } else if (
-        q.type !== "THEORETICAL" &&
-        studentAnswer.selectedAnswer !== q.correctAnswer
-      ) {
+      } else {
         wrongCount++;
         if (q.negativeMarks) {
           score -= q.negativeMarks;

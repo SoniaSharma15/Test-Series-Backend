@@ -52,15 +52,37 @@ export const getResultDetail = async (req, res) => {
         (a) => a.questionId._id.toString() === q._id.toString()
       );
 
+      let isCorrect = false;
+
+      if (q.type === "MSQ") {
+        // ✅ For MSQ: check if all selected answers match correctAnswers
+        const correctSet = new Set(
+          Array.isArray(q.correctAnswers) ? q.correctAnswers : []
+        );
+        const selectedSet = new Set(
+          Array.isArray(studentAnswer?.selectedAnswers) ? studentAnswer.selectedAnswers : []
+        );
+
+        // All correct answers must be selected AND no extra answers
+        isCorrect =
+          correctSet.size === selectedSet.size &&
+          Array.from(correctSet).every((ans) => selectedSet.has(ans));
+      } else {
+        // ✅ For MCQ/MATH/AR: check single answer
+        isCorrect = studentAnswer?.selectedAnswer === q.correctAnswer;
+      }
+
       return {
+        type: q.type, // ✅ Include question type
         questionText: q.questionText,   // bilingual object
         options: q.options,             // bilingual options
-        correctAnswer: q.correctAnswer,
-        selectedAnswer: studentAnswer?.selectedAnswer || null,
+        correctAnswer: q.correctAnswer, // MCQ/MATH/AR
+        correctAnswers: q.correctAnswers, // ✅ MSQ
+        selectedAnswer: studentAnswer?.selectedAnswer || null, // MCQ/MATH/AR
+        selectedAnswers: studentAnswer?.selectedAnswers || [], // ✅ MSQ
         marks: q.marks,
         negativeMarks: q.negativeMarks,
-        isCorrect:
-          studentAnswer?.selectedAnswer === q.correctAnswer,
+        isCorrect,
       };
     });
 

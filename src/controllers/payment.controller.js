@@ -4,7 +4,6 @@ import Payment from "../models/Payment.js";
 import Enrollment from "../models/Enrollment.js";
 import TestSeries from "../models/TestSeries.js";
 import { sendEmail } from "../services/email.service.js";
-import PDFDocument from "pdfkit";
 import puppeteer from "puppeteer";
 
 export const getPaymentHistory = async (req, res) => {
@@ -153,13 +152,20 @@ export const verifyPayment = async (req, res) => {
       status: "success",
     });
 
-    await Enrollment.create({
-      studentId,
-      testSeriesId,
-      paymentId: razorpay_payment_id,
-      amount,
-      status: "active",
-    });
+    // 🔥 expiry = today + duration
+const expiryDate = new Date();
+expiryDate.setDate(expiryDate.getDate() + testSeries.duration);
+
+await Enrollment.create({
+  studentId,
+  testSeriesId,
+  paymentId: razorpay_payment_id,
+  amount,
+  status: "active",
+  source: "payment",
+  expiryDate, // ✅ IMPORTANT
+});
+
 
     await TestSeries.findByIdAndUpdate(
       testSeriesId,

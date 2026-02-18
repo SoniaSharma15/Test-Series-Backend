@@ -32,7 +32,8 @@ const attemptSchema = new mongoose.Schema(
           type: mongoose.Schema.Types.ObjectId,
           ref: "Question",
         },
-        selectedAnswer: String,
+        selectedAnswer: String, // ✅ MCQ, MATH, AR
+        selectedAnswers: [String], // ✅ MSQ (multiple)
       },
     ],
 

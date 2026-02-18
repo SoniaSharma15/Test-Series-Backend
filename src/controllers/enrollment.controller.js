@@ -46,9 +46,36 @@ export const getMyEnrollments = async (req, res) => {
         });
       }
 
+      // 🔥 EXPIRY LOGIC START
+
+      const now = new Date();
+
+      // If expiryDate exists (from payment/admin)
+      let expiryDate;
+
+      if (enrollment.expiryDate) {
+        expiryDate = new Date(enrollment.expiryDate);
+      } else {
+        // fallback (old enrollments)
+        expiryDate = new Date(
+          new Date(enrollment.createdAt).getTime() +
+          enrollment.testSeriesId.duration * 24 * 60 * 60 * 1000
+        );
+      }
+
+      let remainingDays = Math.ceil(
+        (expiryDate - now) / (1000 * 60 * 60 * 24)
+      );
+
+      if (remainingDays < 0) remainingDays = 0;
+
+      // 🔥 EXPIRY LOGIC END
+
       result.push({
         testSeries: enrollment.testSeriesId,
         tests: testsWithBestScore,
+        expiryDate,
+        remainingDays, // ✅ send to frontend
       });
     }
 

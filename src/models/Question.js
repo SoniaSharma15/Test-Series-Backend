@@ -6,44 +6,67 @@ const optionSchema = new mongoose.Schema({
 });
 
 const questionSchema = new mongoose.Schema(
-{
-  testId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Test",
-    required: true,
+  {
+    testId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Test",
+      required: true,
+    },
+
+    type: {
+      type: String,
+      enum: ["MCQ", "MSQ", "MATH", "ASSERTION_REASON", "PASSAGE"],
+      default: "MCQ",
+    },
+
+    questionText: {
+      english: { type: String },
+      hindi: { type: String },
+    },
+
+    options: [optionSchema],
+
+    // optional meta (stores Hindi-specific auxiliary fields like HI options, AR pieces)
+    meta: {
+      hi: {
+        correctAnswer: { type: String },
+        questionText: { type: String },
+        options: [optionSchema],
+        assertionText: { type: String },
+        reasonText: { type: String },
+      },
+    },
+
+    // ✅ MCQ / MATH / AR
+    correctAnswer: { type: String, default: "" },
+
+    // optional uploaded image (for MATH)
+    questionImage: {
+      url: { type: String },
+      publicId: { type: String },
+    },
+
+    // ✅ MSQ (multiple answers)
+    correctAnswers: [{ type: String }],
+
+    // ✅ Question creation language (for answer validation)
+    questionLang: {
+      type: String,
+      enum: ["english", "hindi"],
+      default: "english",
+    },
+
+    marks: {
+      type: Number,
+      required: true,
+    },
+
+    negativeMarks: {
+      type: Number,
+      default: 0,
+    },
   },
-
-  type: {
-    type: String,
-    enum: ["MCQ", "MATH", "ASSERTION_REASON", "PASSAGE"],
-    default: "MCQ",
-  },
-
-  questionText: {
-    english: { type: String },
-    hindi: { type: String },
-  },
-
-  options: [optionSchema],
-
-  correctAnswer: String,
-
-  marks: {
-    type: Number,
-    required: true,
-  },
-
-  negativeMarks: {
-    type: Number,
-    default: 0,
-  },
-
-  allowImage: {
-    type: Boolean,
-    default: false,
-  }
-},
-{ timestamps: true }
+  { timestamps: true }
 );
 
 export default mongoose.model("Question", questionSchema);
