@@ -4,7 +4,7 @@ import Payment from "../models/Payment.js";
 import Enrollment from "../models/Enrollment.js";
 import TestSeries from "../models/TestSeries.js";
 import { sendEmail } from "../services/email.service.js";
-import puppeteer from "puppeteer";
+import { chromium } from "playwright";
 
 export const getPaymentHistory = async (req, res) => {
   try {
@@ -287,196 +287,180 @@ export const downloadReceipt = async (req, res) => {
     // PREMIUM HTML TEMPLATE
     // ===============================
 
-    const html = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8" />
-      <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
-      <style>
-        * { box-sizing: border-box; }
-        body {
-          font-family: 'Poppins', sans-serif;
-          margin: 0;
-          padding: 40px;
-          background: #f8fafc;
-        }
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; }
+body {
+  font-family: 'Poppins', sans-serif;
+  margin: 0;
+  padding: 40px;
+  background: #f8fafc;
+}
+.invoice-container {
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 40px;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.08);
+  position: relative;
+}
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 40px;
+}
+.brand h1 {
+  margin: 0;
+  font-size: 28px;
+  color: #0f172a;
+}
+.brand span {
+  font-size: 12px;
+  color: #64748b;
+}
+.invoice-title {
+  text-align: right;
+}
+.invoice-title h2 {
+  margin: 0;
+  font-size: 24px;
+  color: #1e293b;
+}
+.meta {
+  font-size: 12px;
+  color: #64748b;
+  margin-top: 8px;
+}
+.bill-section {
+  margin: 30px 0;
+}
+.bill-section h3 {
+  font-size: 14px;
+  color: #0f172a;
+  margin-bottom: 8px;
+}
+.bill-info {
+  font-size: 13px;
+  color: #334155;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 30px;
+}
+th {
+  text-align: left;
+  padding: 12px;
+  background: #0f172a;
+  color: white;
+  font-size: 13px;
+}
+td {
+  padding: 12px;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 13px;
+}
+.right { text-align: right; }
+.total-row {
+  background: #1e293b;
+  color: white;
+  font-weight: 600;
+}
+.stamp {
+  position: absolute;
+  top: 50%;
+  right: 50px;
+  transform: rotate(-25deg);
+  font-size: 80px;
+  color: rgba(22, 163, 74, 0.08);
+  font-weight: 700;
+}
+.footer {
+  margin-top: 60px;
+  text-align: center;
+  font-size: 11px;
+  color: #94a3b8;
+}
+</style>
+</head>
+<body>
+<div class="invoice-container">
+<div class="stamp">PAID</div>
 
-        .invoice-container {
-          background: #ffffff;
-          border-radius: 16px;
-          padding: 40px;
-          box-shadow: 0 20px 50px rgba(0,0,0,0.08);
-          position: relative;
-        }
+<div class="header">
+  <div class="brand">
+    <h1>The Brilliant Bihar</h1>
+    <span>Premium Examination Preparation Platform</span>
+  </div>
+  <div class="invoice-title">
+    <h2>INVOICE</h2>
+    <div class="meta">
+      Invoice No: ${invoiceNumber}<br/>
+      Payment ID: ${payment.paymentId}<br/>
+      Order ID: ${payment.orderId}<br/>
+      Date: ${new Date(payment.createdAt).toDateString()}
+    </div>
+  </div>
+</div>
 
-        .header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 40px;
-        }
+<div class="bill-section">
+  <h3>BILL TO</h3>
+  <div class="bill-info">
+    ${req.user.name}<br/>
+    ${req.user.email}
+  </div>
+</div>
 
-        .brand h1 {
-          margin: 0;
-          font-size: 28px;
-          color: #0f172a;
-        }
+<table>
+  <thead>
+    <tr>
+      <th>Description</th>
+      <th class="right">Amount (₹)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>${payment.testSeriesId.title}</td>
+      <td class="right">${basePrice}</td>
+    </tr>
+    <tr>
+      <td>GST (18%)</td>
+      <td class="right">${gstAmount}</td>
+    </tr>
+    <tr class="total-row">
+      <td>Total Paid</td>
+      <td class="right">₹ ${totalPaid}</td>
+    </tr>
+  </tbody>
+</table>
 
-        .brand span {
-          font-size: 12px;
-          color: #64748b;
-        }
+<div class="footer">
+Thank you for choosing The Brilliant Bihar.<br/>
+This is a digitally generated invoice and does not require signature.
+</div>
 
-        .invoice-title {
-          text-align: right;
-        }
-
-        .invoice-title h2 {
-          margin: 0;
-          font-size: 24px;
-          color: #1e293b;
-        }
-
-        .meta {
-          font-size: 12px;
-          color: #64748b;
-          margin-top: 8px;
-        }
-
-        .bill-section {
-          margin: 30px 0;
-        }
-
-        .bill-section h3 {
-          font-size: 14px;
-          color: #0f172a;
-          margin-bottom: 8px;
-        }
-
-        .bill-info {
-          font-size: 13px;
-          color: #334155;
-        }
-
-        table {
-          width: 100%;
-          border-collapse: collapse;
-          margin-top: 30px;
-        }
-
-        th {
-          text-align: left;
-          padding: 12px;
-          background: #0f172a;
-          color: white;
-          font-size: 13px;
-        }
-
-        td {
-          padding: 12px;
-          border-bottom: 1px solid #e2e8f0;
-          font-size: 13px;
-        }
-
-        .right { text-align: right; }
-
-        .total-row {
-          background: #1e293b;
-          color: white;
-          font-weight: 600;
-        }
-
-        .stamp {
-          position: absolute;
-          top: 50%;
-          right: 50px;
-          transform: rotate(-25deg);
-          font-size: 80px;
-          color: rgba(22, 163, 74, 0.08);
-          font-weight: 700;
-        }
-
-        .footer {
-          margin-top: 60px;
-          text-align: center;
-          font-size: 11px;
-          color: #94a3b8;
-        }
-      </style>
-    </head>
-    <body>
-      <div class="invoice-container">
-        <div class="stamp">PAID</div>
-
-        <div class="header">
-          <div class="brand">
-            <h1>The Brilliant Bihar</h1>
-            <span>Premium Examination Preparation Platform</span>
-          </div>
-          <div class="invoice-title">
-            <h2>INVOICE</h2>
-            <div class="meta">
-              Invoice No: ${invoiceNumber}<br/>
-              Payment ID: ${payment.paymentId}<br/>
-              Order ID: ${payment.orderId}<br/>
-              Date: ${new Date(payment.createdAt).toDateString()}
-            </div>
-          </div>
-        </div>
-
-        <div class="bill-section">
-          <h3>BILL TO</h3>
-          <div class="bill-info">
-            ${req.user.name}<br/>
-            ${req.user.email}
-          </div>
-        </div>
-
-        <table>
-          <thead>
-            <tr>
-              <th>Description</th>
-              <th class="right">Amount (₹)</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>${payment.testSeriesId.title}</td>
-              <td class="right">${basePrice}</td>
-            </tr>
-            <tr>
-              <td>GST (18%)</td>
-              <td class="right">${gstAmount}</td>
-            </tr>
-            <tr class="total-row">
-              <td>Total Paid</td>
-              <td class="right">₹ ${totalPaid}</td>
-            </tr>
-          </tbody>
-        </table>
-
-        <div class="footer">
-          Thank you for choosing The Brilliant Bihar.<br/>
-          This is a digitally generated invoice and does not require signature.
-        </div>
-
-      </div>
-    </body>
-    </html>
-    `;
+</div>
+</body>
+</html>`;
 
     // ===============================
-    // GENERATE PDF WITH PUPPETEER
+    // GENERATE PDF WITH PLAYWRIGHT
     // ===============================
 
-    const browser = await puppeteer.launch({
-      headless: "new",
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    const browser = await chromium.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox"], // Required for Railway/VPS
     });
 
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: "networkidle0" });
+
+    await page.setContent(html, {
+      waitUntil: "networkidle",
+    });
 
     const pdfBuffer = await page.pdf({
       format: "A4",
@@ -497,10 +481,11 @@ export const downloadReceipt = async (req, res) => {
       "Content-Length": pdfBuffer.length,
     });
 
-    res.send(pdfBuffer);
+    return res.send(pdfBuffer);
 
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: error.message });
+    console.error("PDF Generation Error:", error);
+    return res.status(500).json({ message: error.message });
   }
 };
+
