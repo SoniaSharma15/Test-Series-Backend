@@ -196,85 +196,162 @@ export const getExamData = async (req, res) => {
 
 
 
+
 export const submitAttempt = async (req, res) => {
   try {
-    const { attemptId, answers } = req.body;
+    const { attemptId, answers = [] } = req.body;
+
+    /* ================= VALIDATE ATTEMPT ================= */
 
     const attempt = await Attempt.findById(attemptId);
-
-    if (!attempt)
+    if (!attempt) {
       return res.status(404).json({ message: "Attempt not found" });
+    }
 
-    if (attempt.status !== "IN_PROGRESS")
+    if (attempt.studentId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    if (attempt.status !== "IN_PROGRESS") {
       return res.status(400).json({ message: "Already submitted" });
+    }
 
     const now = new Date();
-    const elapsed = (now - attempt.startedAt) / 1000;
+    const elapsedSeconds = (now - attempt.startedAt) / 1000;
 
     attempt.status =
-      elapsed > attempt.duration * 60
+      elapsedSeconds > attempt.duration * 60
         ? "AUTO_SUBMITTED"
         : "COMPLETED";
 
+    /* ================= FETCH QUESTIONS ================= */
+
     const questions = await Question.find({
       testId: attempt.testId,
-    });
+    }).lean();
+
+    /* ================= FAST LOOKUP MAP ================= */
+
+    const answerMap = new Map();
+
+    for (const ans of answers) {
+      if (!ans.questionId) continue;
+
+      const key = ans.questionId.toString();
+
+      // Prevent duplicate overwrite
+      if (!answerMap.has(key)) {
+        answerMap.set(key, ans);
+      }
+    }
+
+    /* ================= NORMALIZATION ================= */
+
+    const normalize = (val) =>
+      String(val ?? "")
+        .trim()
+        .replace(/\s+/g, " ")
+        .toLowerCase();
+
+    const normalizeArray = (arr) =>
+      (arr || []).map((a) => normalize(a));
+
+    const safeNumber = (val) =>
+      isNaN(Number(val)) ? 0 : Number(val);
+
+    /* ================= SCORING ================= */
 
     let score = 0;
     let correctCount = 0;
     let wrongCount = 0;
     let attemptedCount = 0;
 
-    questions.forEach((q) => {
-      const studentAnswer = answers.find(
-        (a) => a.questionId.toString() === q._id.toString()
-      );
+    const evaluatedAnswers = [];
 
-      // ✅ Check if answer exists based on question type
+    for (const q of questions) {
+      const studentAnswer = answerMap.get(q._id.toString());
+
+      if (!studentAnswer) continue;
+
       let hasAnswer = false;
+
       if (q.type === "MSQ") {
-        hasAnswer = studentAnswer && Array.isArray(studentAnswer.selectedAnswers) && studentAnswer.selectedAnswers.length > 0;
+        hasAnswer =
+          Array.isArray(studentAnswer.selectedAnswers) &&
+          studentAnswer.selectedAnswers.length > 0;
       } else {
-        hasAnswer = studentAnswer && studentAnswer.selectedAnswer;
+        hasAnswer =
+          studentAnswer.selectedAnswer !== undefined &&
+          studentAnswer.selectedAnswer !== null &&
+          studentAnswer.selectedAnswer !== "";
       }
 
-      if (!hasAnswer) return;
+      if (!hasAnswer) continue;
 
       attemptedCount++;
 
       let isCorrect = false;
 
-      if (q.type === "MSQ") {
-        // ✅ For MSQ: check if all selected answers match correctAnswers
-        const correctSet = new Set(
-          Array.isArray(q.correctAnswers) ? q.correctAnswers : []
-        );
-        const selectedSet = new Set(studentAnswer.selectedAnswers || []);
+      /* ================= MSQ ================= */
 
-        // All correct answers must be selected AND no extra answers
+      if (q.type === "MSQ") {
+        const correctSet = new Set(
+          normalizeArray(q.correctAnswers)
+        );
+
+        const selectedSet = new Set(
+          normalizeArray(studentAnswer.selectedAnswers)
+        );
+
         isCorrect =
           correctSet.size === selectedSet.size &&
-          Array.from(correctSet).every((ans) => selectedSet.has(ans));
-      } else if (q.type !== "THEORETICAL" && q.type !== "PASSAGE") {
-        // ✅ For MCQ/MATH/AR: check single answer
-        isCorrect = studentAnswer.selectedAnswer === q.correctAnswer;
+          [...correctSet].every((ans) =>
+            selectedSet.has(ans)
+          );
       }
 
+      /* ================= OBJECTIVE ================= */
+
+      else if (
+        q.type !== "THEORETICAL" &&
+        q.type !== "PASSAGE"
+      ) {
+        const studentVal = normalize(
+          studentAnswer.selectedAnswer
+        );
+        const correctVal = normalize(q.correctAnswer);
+
+        isCorrect = studentVal === correctVal;
+      }
+
+      /* ================= SCORE UPDATE ================= */
+
       if (isCorrect) {
-        score += q.marks;
+        score += safeNumber(q.marks);
         correctCount++;
       } else {
         wrongCount++;
+
         if (q.negativeMarks) {
-          score -= q.negativeMarks;
+          score -= safeNumber(q.negativeMarks);
         }
       }
-    });
 
-    // ✅ ROUND OFF HERE
-    score = Number(score.toFixed(2));  // 2 decimal precision
+      /* Store evaluated result for future-proof result page */
 
-    attempt.answers = answers;
+      evaluatedAnswers.push({
+        questionId: q._id,
+        selectedAnswer: studentAnswer.selectedAnswer || null,
+        selectedAnswers: studentAnswer.selectedAnswers || [],
+        isCorrect,
+      });
+    }
+
+    /* ================= FINALIZE ================= */
+
+    score = Number(score.toFixed(2));
+
+    attempt.answers = evaluatedAnswers; // store evaluated answers
     attempt.score = score;
     attempt.correctCount = correctCount;
     attempt.wrongCount = wrongCount;
@@ -283,15 +360,23 @@ export const submitAttempt = async (req, res) => {
 
     await attempt.save();
 
-    res.json({
-      message: "Test submitted",
+    return res.json({
+      message: "Test submitted successfully",
       score,
+      correctCount,
+      wrongCount,
+      attemptedCount,
+      status: attempt.status,
     });
 
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error("Submit Attempt Error:", error);
+    return res.status(500).json({
+      message: error.message || "Server Error",
+    });
   }
 };
+
 
 
 
