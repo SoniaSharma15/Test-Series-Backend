@@ -15,12 +15,6 @@ const seedData = async () => {
     await mongoose.connect(MONGO_URI);
     console.log("MongoDB Connected");
 
-    // Clear old data
-    await Question.deleteMany();
-    await Test.deleteMany();
-    await TestSeries.deleteMany();
-
-    console.log("Old data cleared");
 
     // =========================
     // LOOP FOR 3 TEST SERIES

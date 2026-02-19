@@ -12,24 +12,27 @@ export const startAttempt = async (req, res) => {
     if (!test)
       return res.status(404).json({ message: "Test not found" });
 
-    // ❌ Prevent ANY previous attempt
-    const existingAttempt = await Attempt.findOne({
+    // Prevent multiple active attempts
+    const existing = await Attempt.findOne({
       studentId,
       testId,
-      status: { $in: ["IN_PROGRESS", "COMPLETED", "AUTO_SUBMITTED"] },
+      status: { $in: ["IN_PROGRESS"] },
     });
 
-    if (existingAttempt) {
-      return res.status(400).json({
-        message: "You have already attempted this test",
-        alreadyAttempted: true,
+    if (existing) {
+      return res.status(200).json({
+        attemptId: existing._id,
+        resumed: true,
       });
     }
 
-    const newAttempt = await Attempt.create({
+    const attemptNumber =
+      (await Attempt.countDocuments({ studentId, testId })) + 1;
+
+    const attempt = await Attempt.create({
       studentId,
       testId,
-      attemptNumber: 1,
+      attemptNumber,
       duration: test.duration,
       ipAddress: req.ip,
       userAgent: req.headers["user-agent"],
@@ -37,13 +40,15 @@ export const startAttempt = async (req, res) => {
     });
 
     res.status(201).json({
-      attemptId: newAttempt._id,
+      attemptId: attempt._id,
+      resumed: false,
     });
 
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
+
 
 
 export const getPerformance = async (req, res) => {
@@ -127,57 +132,21 @@ export const getExamData = async (req, res) => {
     const attempt = await Attempt.findById(attemptId)
       .populate("testId");
 
-    if (!attempt) {
-      return res.status(404).json({
-        status: "NOT_FOUND",
-        message: "Attempt not found",
-      });
-    }
+    if (!attempt)
+      return res.status(404).json({ message: "Attempt not found" });
 
-    if (attempt.studentId.toString() !== req.user._id.toString()) {
-      return res.status(403).json({
-        status: "UNAUTHORIZED",
-        message: "Unauthorized access",
-      });
-    }
+    if (attempt.studentId.toString() !== req.user._id.toString())
+      return res.status(403).json({ message: "Unauthorized" });
 
-    // ✅ Handle completed
-    if (attempt.status === "COMPLETED" || attempt.status === "AUTO_SUBMITTED") {
-      return res.status(409).json({
-        status: "COMPLETED",
-        message: "Exam already submitted",
-      });
-    }
-
-    // ✅ Handle terminated
-    if (attempt.status === "TERMINATED") {
-      return res.status(403).json({
-        status: "TERMINATED",
-        message: "Exam terminated due to violations",
-      });
-    }
-
-    // ✅ Server-side time validation
-    const now = new Date();
-    const elapsed = (now - attempt.startedAt) / 1000;
-
-    if (elapsed > attempt.duration * 60) {
-      attempt.status = "AUTO_SUBMITTED";
-      attempt.submittedAt = new Date();
-      await attempt.save();
-
-      return res.status(409).json({
-        status: "TIME_EXPIRED",
-        message: "Time expired",
-      });
-    }
+    if (attempt.status !== "IN_PROGRESS")
+      return res.status(409).json({ message: "Already submitted" });
 
     const questions = await Question.find({
       testId: attempt.testId._id,
-    });
+      isActive: true,
+    }).lean();
 
-    return res.json({
-      status: "ACTIVE",
+    res.json({
       test: attempt.testId,
       questions,
       startedAt: attempt.startedAt,
@@ -185,14 +154,9 @@ export const getExamData = async (req, res) => {
     });
 
   } catch (error) {
-    return res.status(500).json({
-      status: "SERVER_ERROR",
-      message: error.message,
-    });
+    res.status(500).json({ message: error.message });
   }
 };
-
-
 
 
 
@@ -200,179 +164,139 @@ export const submitAttempt = async (req, res) => {
   try {
     const { attemptId, answers = [] } = req.body;
 
-    /* ================= VALIDATE ATTEMPT ================= */
-
     const attempt = await Attempt.findById(attemptId);
-    if (!attempt) {
+    if (!attempt)
       return res.status(404).json({ message: "Attempt not found" });
-    }
 
-    if (attempt.studentId.toString() !== req.user._id.toString()) {
+    if (attempt.studentId.toString() !== req.user._id.toString())
       return res.status(403).json({ message: "Unauthorized" });
-    }
 
-    if (attempt.status !== "IN_PROGRESS") {
+    if (attempt.status !== "IN_PROGRESS")
       return res.status(400).json({ message: "Already submitted" });
-    }
-
-    const now = new Date();
-    const elapsedSeconds = (now - attempt.startedAt) / 1000;
-
-    attempt.status =
-      elapsedSeconds > attempt.duration * 60
-        ? "AUTO_SUBMITTED"
-        : "COMPLETED";
-
-    /* ================= FETCH QUESTIONS ================= */
 
     const questions = await Question.find({
       testId: attempt.testId,
+      isActive: true,
     }).lean();
 
-    /* ================= FAST LOOKUP MAP ================= */
+    /* =====================================================
+       FLATTEN QUESTIONS (Handle PASSAGE)
+    ===================================================== */
+
+    const flattened = [];
+
+    for (const q of questions) {
+      if (q.type === "PASSAGE") {
+        q.passageQuestions.forEach((child, index) => {
+          flattened.push({
+            parentId: q._id,
+            childIndex: index,
+            ...child,
+          });
+        });
+      } else {
+        flattened.push({
+          parentId: q._id,
+          childIndex: null,
+          ...q,
+        });
+      }
+    }
+
+    /* =====================================================
+       MAP STUDENT ANSWERS
+    ===================================================== */
 
     const answerMap = new Map();
 
     for (const ans of answers) {
-      if (!ans.questionId) continue;
-
-      const key = ans.questionId.toString();
-
-      // Prevent duplicate overwrite
-      if (!answerMap.has(key)) {
-        answerMap.set(key, ans);
-      }
+      const key = `${ans.questionId}_${ans.childIndex ?? "main"}`;
+      answerMap.set(key, ans.selectedAnswers || []);
     }
 
-    /* ================= NORMALIZATION ================= */
+    /* =====================================================
+       SCORING
+    ===================================================== */
 
-    const normalize = (val) =>
-      String(val ?? "")
-        .trim()
-        .replace(/\s+/g, " ")
-        .toLowerCase();
-
-    const normalizeArray = (arr) =>
-      (arr || []).map((a) => normalize(a));
-
-    const safeNumber = (val) =>
-      isNaN(Number(val)) ? 0 : Number(val);
-
-    /* ================= SCORING ================= */
-
-    let score = 0;
+    let totalMarks = 0;
+    let obtainedMarks = 0;
     let correctCount = 0;
     let wrongCount = 0;
     let attemptedCount = 0;
 
     const evaluatedAnswers = [];
 
-    for (const q of questions) {
-      const studentAnswer = answerMap.get(q._id.toString());
+    for (const q of flattened) {
+      const key = `${q.parentId}_${q.childIndex ?? "main"}`;
+      const selected = answerMap.get(key) || [];
+      const correct = q.correctAnswers || [];
 
-      if (!studentAnswer) continue;
-
-      let hasAnswer = false;
-
-      if (q.type === "MSQ") {
-        hasAnswer =
-          Array.isArray(studentAnswer.selectedAnswers) &&
-          studentAnswer.selectedAnswers.length > 0;
-      } else {
-        hasAnswer =
-          studentAnswer.selectedAnswer !== undefined &&
-          studentAnswer.selectedAnswer !== null &&
-          studentAnswer.selectedAnswer !== "";
-      }
-
-      if (!hasAnswer) continue;
-
-      attemptedCount++;
+      totalMarks += q.marks;
 
       let isCorrect = false;
+      let marksAwarded = 0;
 
-      /* ================= MSQ ================= */
+      if (selected.length > 0) {
+        attemptedCount++;
 
-      if (q.type === "MSQ") {
-        const correctSet = new Set(
-          normalizeArray(q.correctAnswers)
-        );
+        const isExactMatch =
+          selected.length === correct.length &&
+          selected.every((a) => correct.includes(a));
 
-        const selectedSet = new Set(
-          normalizeArray(studentAnswer.selectedAnswers)
-        );
-
-        isCorrect =
-          correctSet.size === selectedSet.size &&
-          [...correctSet].every((ans) =>
-            selectedSet.has(ans)
-          );
-      }
-
-      /* ================= OBJECTIVE ================= */
-
-      else if (
-        q.type !== "THEORETICAL" &&
-        q.type !== "PASSAGE"
-      ) {
-        const studentVal = normalize(
-          studentAnswer.selectedAnswer
-        );
-        const correctVal = normalize(q.correctAnswer);
-
-        isCorrect = studentVal === correctVal;
-      }
-
-      /* ================= SCORE UPDATE ================= */
-
-      if (isCorrect) {
-        score += safeNumber(q.marks);
-        correctCount++;
-      } else {
-        wrongCount++;
-
-        if (q.negativeMarks) {
-          score -= safeNumber(q.negativeMarks);
+        if (isExactMatch) {
+          isCorrect = true;
+          marksAwarded = q.marks;
+          correctCount++;
+        } else {
+          marksAwarded = -Math.abs(q.negativeMarks || 0);
+          wrongCount++;
         }
-      }
 
-      /* Store evaluated result for future-proof result page */
+        obtainedMarks += marksAwarded;
+      }
 
       evaluatedAnswers.push({
-        questionId: q._id,
-        selectedAnswer: studentAnswer.selectedAnswer || null,
-        selectedAnswers: studentAnswer.selectedAnswers || [],
+        questionId: q.parentId,
+        childIndex: q.childIndex,
+        questionType: q.type,
+        selectedAnswers: selected,
+        correctAnswersSnapshot: correct,
+        marks: q.marks,
+        negativeMarks: q.negativeMarks,
         isCorrect,
+        marksAwarded,
       });
     }
 
-    /* ================= FINALIZE ================= */
+    /* =====================================================
+       FINALIZE ATTEMPT
+    ===================================================== */
 
-    score = Number(score.toFixed(2));
-
-    attempt.answers = evaluatedAnswers; // store evaluated answers
-    attempt.score = score;
+    attempt.answers = evaluatedAnswers;
+    attempt.totalMarks = totalMarks;
+    attempt.obtainedMarks = Number(obtainedMarks.toFixed(2));
     attempt.correctCount = correctCount;
     attempt.wrongCount = wrongCount;
     attempt.attemptedCount = attemptedCount;
-    attempt.submittedAt = now;
+    attempt.unattemptedCount = flattened.length - attemptedCount;
+    attempt.submittedAt = new Date();
+    attempt.status = "COMPLETED";
 
     await attempt.save();
 
-    return res.json({
+    res.json({
       message: "Test submitted successfully",
-      score,
+      totalMarks,
+      obtainedMarks: attempt.obtainedMarks,
       correctCount,
       wrongCount,
       attemptedCount,
-      status: attempt.status,
+      unattemptedCount: attempt.unattemptedCount,
     });
 
   } catch (error) {
-    console.error("Submit Attempt Error:", error);
-    return res.status(500).json({
-      message: error.message || "Server Error",
-    });
+    console.error("Submit Error:", error);
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -392,11 +316,38 @@ export const getResult = async (req, res) => {
     if (!attempt)
       return res.status(404).json({ message: "Not found" });
 
-    res.json(attempt);
+    /* ==========================================
+       TRANSFORM ANSWERS (HANDLE PASSAGE PROPERLY)
+    ========================================== */
+
+    const transformedAnswers = attempt.answers.map((ans) => {
+      const parent = ans.questionId;
+
+      let questionData = null;
+
+      // 🔹 If Passage → pick child question
+      if (parent.type === "PASSAGE" && ans.childIndex !== null) {
+        questionData = parent.passageQuestions[ans.childIndex];
+      } else {
+        questionData = parent;
+      }
+
+      return {
+        ...ans.toObject(),
+        questionData, // 🔥 send proper question
+      };
+    });
+
+    res.json({
+      ...attempt.toObject(),
+      answers: transformedAnswers,
+    });
+
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
+
 
 
 export const getTestById = async (req, res) => {

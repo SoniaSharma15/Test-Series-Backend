@@ -1,427 +1,325 @@
-// controllers/question.controller.js
 import Question from "../models/Question.js";
+import cloudinary from "../config/cloudinary.js";
 
-/* =========================
-   Helpers
-========================= */
-const parseIfJSON = (v) => {
-  if (typeof v !== "string") return v;
-  try {
-    return JSON.parse(v);
-  } catch {
-    return v;
+const validateOptions = (options) => {
+  if (!options || options.length !== 4) {
+    throw new Error("Exactly 4 options required");
+  }
+
+  const ids = options.map((o) => o.id);
+  const required = ["A", "B", "C", "D"];
+
+  if (!required.every((r) => ids.includes(r))) {
+    throw new Error("Options must include A, B, C, D");
   }
 };
 
-const toNumber = (v) => {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : v;
+const validateCorrectAnswers = (correctAnswers, options) => {
+  if (!correctAnswers?.length) {
+    throw new Error("At least one correct answer required");
+  }
+
+  const validIds = options.map((o) => o.id);
+
+  const isValid = correctAnswers.every((ans) =>
+    validIds.includes(ans)
+  );
+
+  if (!isValid) {
+    throw new Error("Correct answers must match option ids");
+  }
 };
 
-const ensureArray = (v) => (Array.isArray(v) ? v : []);
 
-const normalizeLang = (req) => {
-  // accepts: req.body.lang OR req.body.meta.lang
-  const meta = parseIfJSON(req.body.meta) || {};
-  const raw = String(req.body.lang || meta.lang || "english")
-    .trim()
-    .toLowerCase();
-
-  // detect dual/bilingual automatically when payload contains both languages
-  const detectDualFromBody = () => {
-    try {
-      const qText = parseIfJSON(req.body.questionText) || {};
-      const opts = parseIfJSON(req.body.options) || [];
-      const metaHi = (parseIfJSON(req.body.meta) || {}).hi || {};
-
-      const hasQEn = String(qText.english || "").trim().length > 0;
-      const hasQHi = String(qText.hindi || "").trim().length > 0;
-
-      // require both languages for options if present
-      const optsBoth =
-        Array.isArray(opts) &&
-        opts.length === 4 &&
-        opts.every((o) => String(o?.english || "").trim().length > 0 && String(o?.hindi || "").trim().length > 0);
-
-      const metaHiPresent = String(metaHi.assertionText || "").trim().length > 0 || String(metaHi.reasonText || "").trim().length > 0 || String(metaHi.questionText || "").trim().length > 0;
-
-      return (hasQEn && hasQHi) || optsBoth || metaHiPresent;
-    } catch {
-      return false;
+const validateQuestion = (data) => {
+  if (data.type === "PASSAGE") {
+    if (!data.passageText?.english) {
+      throw new Error("Passage text required");
     }
-  };
 
-  if (raw === "hi" || raw === "hindi") return "hindi";
-  if (raw === "dual" || raw === "bilingual" || raw === "both") return "dual";
+    if (!data.passageQuestions?.length) {
+      throw new Error("Passage must contain questions");
+    }
 
-  // if payload itself contains both languages, treat as dual
-  if (detectDualFromBody()) return "dual";
+    data.passageQuestions.forEach((q) => {
+      validateOptions(q.options);
+      validateCorrectAnswers(q.correctAnswers, q.options);
 
-  return "english"; // default
-};
+      if (q.type === "ASSERTION_REASON") {
+        if (!q.assertion?.english || !q.reason?.english) {
+          throw new Error("Assertion and Reason required");
+        }
+      } else {
+        if (!q.questionText?.english) {
+          throw new Error("Question text required");
+        }
+      }
+    });
+  } else {
+    validateOptions(data.options);
+    validateCorrectAnswers(data.correctAnswers, data.options);
 
-const getOptText = (opt, lang) => String(opt?.[lang] || "").trim();
-
-const validateOptions4ByLang = (options, lang) => {
-  if (!Array.isArray(options) || options.length !== 4) return false;
-  // ✅ selected language required, other can be empty
-  if (lang === "dual") {
-    // require both english and hindi present for each option
-    return options.every((o) => String(o?.english || "").trim().length > 0 && String(o?.hindi || "").trim().length > 0);
+    if (data.type === "ASSERTION_REASON") {
+      if (!data.assertion?.english || !data.reason?.english) {
+        throw new Error("Assertion and Reason required");
+      }
+    } else {
+      if (!data.questionText?.english) {
+        throw new Error("Question text required");
+      }
+    }
   }
-
-  return options.every((o) => getOptText(o, lang).length > 0);
 };
 
-const normalizeCorrectAnswers = (v) => {
-  // supports:
-  // - ["a","b"]
-  // - '["a","b"]'
-  // - "a,b"
-  const parsed = parseIfJSON(v);
 
-  if (Array.isArray(parsed)) {
-    return parsed.map((x) => String(x || "").trim()).filter(Boolean);
-  }
-
-  if (typeof parsed === "string") {
-    return parsed
-      .split(",")
-      .map((x) => String(x || "").trim())
-      .filter(Boolean);
-  }
-
-  return [];
-};
-
-const validateMSQAnswersByLang = (options, correctAnswers, lang) => {
-  const optList = options.map((o) => getOptText(o, lang));
-
-  const cleaned = ensureArray(correctAnswers)
-    .map((x) => String(x || "").trim())
-    .filter(Boolean);
-
-  // ✅ at least 2
-  if (cleaned.length < 2) return false;
-
-  // ✅ unique
-  if (new Set(cleaned).size !== cleaned.length) return false;
-
-  // ✅ must match options in selected language
-  if (lang === "dual") {
-    const optEn = options.map((o) => String(o?.english || "").trim());
-    const optHi = options.map((o) => String(o?.hindi || "").trim());
-    return cleaned.every((ans) => optEn.includes(ans) || optHi.includes(ans));
-  }
-
-  return cleaned.every((ans) => optList.includes(ans));
-};
-
-const mapMSQAnswersToEnglish = (options, answers) => {
-  const en = options.map((o) => String(o?.english || "").trim());
-  const hi = options.map((o) => String(o?.hindi || "").trim());
-  return ensureArray(answers)
-    .map((a) => String(a || "").trim())
-    .map((val) => {
-      if (!val) return null;
-      const iEn = en.indexOf(val);
-      if (iEn >= 0) return en[iEn];
-      const iHi = hi.indexOf(val);
-      if (iHi >= 0) return en[iHi];
-      return null;
-    })
-    .filter(Boolean);
-};
-
-/* =========================
-   CREATE
-========================= */
 export const createQuestion = async (req, res) => {
+  console.log("========== CREATE QUESTION START ==========");
+
   try {
-    // ✅ multipart/form-data strings -> parse
-    req.body.questionText = parseIfJSON(req.body.questionText);
-    req.body.options = parseIfJSON(req.body.options);
-    req.body.meta = parseIfJSON(req.body.meta);
+    let data = { ...req.body };
 
-    // ✅ numeric fields
-    req.body.marks = toNumber(req.body.marks);
-    req.body.negativeMarks = toNumber(req.body.negativeMarks);
+    console.log("Raw req.body:", req.body);
+    console.log("Uploaded File:", req.uploadedFile);
 
-    const type = String(req.body.type || "").trim();
-    const lang = normalizeLang(req); // ✅ "english" | "hindi"
+    /* =====================================================
+       1️⃣ SAFE JSON PARSE (ALL POSSIBLE OBJECT FIELDS)
+    ===================================================== */
 
-    // ✅ Store the question language for answer validation
-    req.body.questionLang = lang;
+    const fieldsToParse = [
+      "options",
+      "correctAnswers",
+      "passageQuestions",
+      "questionText",
+      "assertion",
+      "reason",
+      "explanation",
+      "passageText",
+    ];
 
-    // ✅ attach uploaded image info (from upload.middleware -> uploadToCloudinary)
-    if (req.uploadedFile) {
-      req.body.questionImage = req.uploadedFile;
-    }
-
-    // ✅ normalize MSQ correctAnswers before validation
-    if (type === "MSQ") {
-      req.body.correctAnswers = normalizeCorrectAnswers(req.body.correctAnswers);
-    }
-
-    // -------------------------
-    // VALIDATIONS by type
-    // -------------------------
-    if (type === "MCQ" || type === "MATH" || type === "ASSERTION_REASON") {
-      const opts = ensureArray(req.body.options);
-
-      if (!validateOptions4ByLang(opts, lang)) {
-        return res.status(400).json({
-          message: `${type} must have 4 options (${lang} required)`,
-        });
-      }
-
-      const ca = String(req.body.correctAnswer || "").trim();
-      if (!ca) {
-        return res.status(400).json({ message: "Correct answer required" });
-      }
-
-      // ✅ strict: correctAnswer must match selected-language option
-      let optList = [];
-      if (lang === "dual") {
-        optList = opts
-          .flatMap((o) => [String(o?.english || "").trim(), String(o?.hindi || "").trim()])
-          .filter(Boolean);
-      } else {
-        optList = opts.map((o) => getOptText(o, lang));
-      }
-
-      if (!optList.includes(ca)) {
-        return res.status(400).json({
-          message: `Correct answer must match a ${lang} option`,
-        });
-      }
-
-      // For Assertion–Reason ensure both languages present in dual mode
-      if (type === "ASSERTION_REASON" && lang === "dual") {
-        const qText = parseIfJSON(req.body.questionText) || {};
-        const meta = parseIfJSON(req.body.meta) || {};
-        const hiMeta = meta.hi || {};
-        const hasEn = String(qText.english || "").trim().length > 0;
-        const hasHi = String(qText.hindi || "").trim().length > 0 || String(hiMeta.assertionText || "").trim().length > 0 || String(hiMeta.reasonText || "").trim().length > 0;
-        if (!hasEn || !hasHi) {
-          return res.status(400).json({ message: "ASSERTION_REASON requires both English and Hindi assertion/reason in dual mode" });
+    fieldsToParse.forEach((field) => {
+      if (typeof data[field] === "string") {
+        try {
+          data[field] = JSON.parse(data[field]);
+          console.log(`Parsed field: ${field}`);
+        } catch (err) {
+          console.log(`Failed parsing field: ${field}`);
         }
       }
-
-      req.body.options = opts;
-      req.body.correctAnswers = []; // keep clean
-    }
-
-    if (type === "MSQ") {
-      const opts = ensureArray(req.body.options);
-
-      if (!validateOptions4ByLang(opts, lang)) {
-        return res.status(400).json({
-          message: `MSQ must have 4 options (${lang} required)`,
-        });
-      }
-
-      const answers = ensureArray(req.body.correctAnswers);
-
-      if (!validateMSQAnswersByLang(opts, answers, lang)) {
-        return res.status(400).json({
-          message: `MSQ correctAnswers required (min 2), unique, and must match ${lang} options`,
-        });
-      }
-
-      req.body.options = opts;
-      req.body.correctAnswer = ""; // keep clean
-      // When bilingual/dual, normalize stored answers to English text
-      if (lang === "dual") {
-        req.body.correctAnswers = mapMSQAnswersToEnglish(opts, answers);
-      } else {
-        req.body.correctAnswers = answers;
-      }
-    }
-
-    if (type === "PASSAGE") {
-      // Keep flexible for PASSAGE
-      req.body.options = ensureArray(req.body.options);
-      req.body.correctAnswer = String(req.body.correctAnswer || "").trim();
-      req.body.correctAnswers = normalizeCorrectAnswers(req.body.correctAnswers);
-
-      // if bilingual/dual, ensure passage text exists in both languages
-      const qText = parseIfJSON(req.body.questionText) || {};
-      if (lang === "dual") {
-        if (!String(qText.english || "").trim() || !String(qText.hindi || "").trim()) {
-          return res.status(400).json({ message: "PASSAGE requires both English and Hindi passage text in dual mode" });
-        }
-      }
-    }
-
-    const question = await Question.create(req.body);
-    return res.status(201).json(question);
-  } catch (error) {
-    if (error?.name === "ValidationError") {
-      return res.status(400).json({ message: error.message });
-    }
-    return res.status(500).json({ message: error.message });
-  }
-};
-
-/* =========================
-   UPDATE
-========================= */
-export const updateQuestion = async (req, res) => {
-  try {
-    req.body.questionText = parseIfJSON(req.body.questionText);
-    req.body.options = parseIfJSON(req.body.options);
-    req.body.meta = parseIfJSON(req.body.meta);
-
-    if (req.body.marks !== undefined) req.body.marks = toNumber(req.body.marks);
-    if (req.body.negativeMarks !== undefined)
-      req.body.negativeMarks = toNumber(req.body.negativeMarks);
-
-    const type = String(req.body.type || "").trim();
-    const lang = normalizeLang(req);
-
-    // ✅ Store the question language for answer validation
-    if (type) req.body.questionLang = lang;
-
-    // ✅ attach uploaded image info when updating
-    if (req.uploadedFile) {
-      req.body.questionImage = req.uploadedFile;
-    }
-
-    // ✅ normalize MSQ correctAnswers
-    if (type === "MSQ") {
-      req.body.correctAnswers = normalizeCorrectAnswers(req.body.correctAnswers);
-    }
-
-    // -------------------------
-    // VALIDATIONS by type (only if type provided)
-    // -------------------------
-    if (type === "MCQ" || type === "MATH" || type === "ASSERTION_REASON") {
-      const opts = ensureArray(req.body.options);
-
-      if (!validateOptions4ByLang(opts, lang)) {
-        return res.status(400).json({
-          message: `${type} must have 4 options (${lang} required)`,
-        });
-      }
-
-      const ca = String(req.body.correctAnswer || "").trim();
-      if (!ca) {
-        return res.status(400).json({ message: "Correct answer required" });
-      }
-
-      let optList = [];
-      if (lang === "dual") {
-        optList = opts
-          .flatMap((o) => [String(o?.english || "").trim(), String(o?.hindi || "").trim()])
-          .filter(Boolean);
-      } else {
-        optList = opts.map((o) => getOptText(o, lang));
-      }
-
-      if (!optList.includes(ca)) {
-        return res.status(400).json({
-          message: `Correct answer must match a ${lang} option`,
-        });
-      }
-
-      // For Assertion–Reason ensure both languages present in dual mode
-      if (type === "ASSERTION_REASON" && lang === "dual") {
-        const qText = parseIfJSON(req.body.questionText) || {};
-        const meta = parseIfJSON(req.body.meta) || {};
-        const hiMeta = meta.hi || {};
-        const hasEn = String(qText.english || "").trim().length > 0;
-        const hasHi = String(qText.hindi || "").trim().length > 0 || String(hiMeta.assertionText || "").trim().length > 0 || String(hiMeta.reasonText || "").trim().length > 0;
-        if (!hasEn || !hasHi) {
-          return res.status(400).json({ message: "ASSERTION_REASON requires both English and Hindi assertion/reason in dual mode" });
-        }
-      }
-
-      req.body.options = opts;
-      req.body.correctAnswers = [];
-    }
-
-    if (type === "MSQ") {
-      const opts = ensureArray(req.body.options);
-
-      if (!validateOptions4ByLang(opts, lang)) {
-        return res.status(400).json({
-          message: `MSQ must have 4 options (${lang} required)`,
-        });
-      }
-
-      const answers = ensureArray(req.body.correctAnswers);
-
-      if (!validateMSQAnswersByLang(opts, answers, lang)) {
-        return res.status(400).json({
-          message: `MSQ correctAnswers required (min 2), unique, and must match ${lang} options`,
-        });
-      }
-
-      req.body.options = opts;
-      req.body.correctAnswer = "";
-      if (lang === "dual") {
-        req.body.correctAnswers = mapMSQAnswersToEnglish(opts, answers);
-      } else {
-        req.body.correctAnswers = answers;
-      }
-    }
-
-    if (type === "PASSAGE") {
-      req.body.options = ensureArray(req.body.options);
-      req.body.correctAnswer = String(req.body.correctAnswer || "").trim();
-      req.body.correctAnswers = normalizeCorrectAnswers(req.body.correctAnswers);
-
-      const qText = parseIfJSON(req.body.questionText) || {};
-      if (lang === "dual") {
-        if (!String(qText.english || "").trim() || !String(qText.hindi || "").trim()) {
-          return res.status(400).json({ message: "PASSAGE requires both English and Hindi passage text in dual mode" });
-        }
-      }
-    }
-
-    const updated = await Question.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-      runValidators: true,
     });
 
-    if (!updated) return res.status(404).json({ message: "Question not found" });
+    console.log("After parsing:", data);
 
-    return res.json(updated);
-  } catch (error) {
-    if (error?.name === "ValidationError") {
-      return res.status(400).json({ message: error.message });
+    /* =====================================================
+       2️⃣ CLOUDINARY IMAGE
+    ===================================================== */
+
+    if (req.uploadedFile) {
+      data.image = req.uploadedFile.url;
+      data.imagePublicId = req.uploadedFile.publicId;
+      console.log("Image attached:", data.image);
     }
-    return res.status(500).json({ message: error.message });
-  }
-};
 
-/* =========================
-   DELETE
-========================= */
-export const deleteQuestion = async (req, res) => {
-  try {
-    const q = await Question.findById(req.params.id);
-    if (!q) return res.status(404).json({ message: "Question not found" });
+    /* =====================================================
+       3️⃣ BASIC REQUIRED CHECK
+    ===================================================== */
 
-    await Question.findByIdAndDelete(req.params.id);
-    return res.json({ message: "Question deleted" });
+    if (!data.testId) {
+      throw new Error("testId missing");
+    }
+
+    if (!data.type) {
+      throw new Error("Question type missing");
+    }
+
+    console.log("Type:", data.type);
+
+    /* =====================================================
+       4️⃣ VALIDATION LOGIC
+    ===================================================== */
+
+    if (data.type === "PASSAGE") {
+      console.log("Validating PASSAGE...");
+
+      if (!data.passageText?.english) {
+        throw new Error("Passage text required");
+      }
+
+      if (!Array.isArray(data.passageQuestions) || !data.passageQuestions.length) {
+        throw new Error("Passage must contain questions");
+      }
+
+      data.passageQuestions.forEach((q, index) => {
+        console.log(`Validating child question ${index}`);
+
+        validateOptions(q.options);
+        validateCorrectAnswers(q.correctAnswers, q.options);
+
+        if (q.type === "ASSERTION_REASON") {
+          if (!q.assertion?.english || !q.reason?.english) {
+            throw new Error(`Assertion/Reason missing in sub question ${index}`);
+          }
+        } else {
+          if (!q.questionText?.english) {
+            throw new Error(`Question text missing in sub question ${index}`);
+          }
+        }
+      });
+
+    } else {
+      console.log("Validating NORMAL question...");
+
+      validateOptions(data.options);
+      validateCorrectAnswers(data.correctAnswers, data.options);
+
+      if (data.type === "ASSERTION_REASON") {
+        if (!data.assertion?.english || !data.reason?.english) {
+          throw new Error("Assertion and Reason required");
+        }
+      } else {
+        if (!data.questionText?.english) {
+          throw new Error("Question text required");
+        }
+      }
+    }
+
+    console.log("Validation passed ✔");
+
+    /* =====================================================
+       5️⃣ CREATE IN DB
+    ===================================================== */
+
+    const question = await Question.create(data);
+
+    console.log("Question created:", question._id);
+    console.log("========== CREATE QUESTION SUCCESS ==========");
+
+    res.status(201).json({
+      success: true,
+      message: "Question created successfully",
+      data: question,
+    });
+
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+    console.log("❌ CREATE QUESTION ERROR:", error.message);
+    console.log("Stack:", error.stack);
+    console.log("========== CREATE QUESTION FAILED ==========");
+
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
   }
 };
 
-/* =========================
-   GET BY TEST
-========================= */
+
+
+
 export const getQuestionsByTest = async (req, res) => {
   try {
-    const questions = await Question.find({ testId: req.params.testId }).sort({
+    const { testId } = req.params;
+
+    const questions = await Question.find({ testId }).sort({
       createdAt: -1,
     });
 
-    return res.json(questions);
+    res.status(200).json({
+      success: true,
+      count: questions.length,
+      data: questions,
+    });
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
   }
 };
+
+
+
+export const updateQuestion = async (req, res) => {
+  try {
+    let data = { ...req.body };
+
+    const existing = await Question.findById(req.params.id);
+
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        message: "Question not found",
+      });
+    }
+
+    if (typeof data.options === "string") {
+      data.options = JSON.parse(data.options);
+    }
+
+    if (typeof data.correctAnswers === "string") {
+      data.correctAnswers = JSON.parse(data.correctAnswers);
+    }
+
+    if (typeof data.passageQuestions === "string") {
+      data.passageQuestions = JSON.parse(data.passageQuestions);
+    }
+
+    // If new image uploaded → delete old image
+    if (req.uploadedFile) {
+      if (existing.imagePublicId) {
+        await cloudinary.uploader.destroy(existing.imagePublicId);
+      }
+
+      data.image = req.uploadedFile.url;
+      data.imagePublicId = req.uploadedFile.publicId;
+    }
+
+    const updated = await Question.findByIdAndUpdate(
+      req.params.id,
+      data,
+      { new: true }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Question updated successfully",
+      data: updated,
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+
+
+export const deleteQuestion = async (req, res) => {
+  try {
+    const question = await Question.findById(req.params.id);
+
+    if (!question) {
+      return res.status(404).json({
+        success: false,
+        message: "Question not found",
+      });
+    }
+
+    // Delete image from Cloudinary
+    if (question.imagePublicId) {
+      await cloudinary.uploader.destroy(question.imagePublicId);
+    }
+
+    await question.deleteOne();
+
+    res.status(200).json({
+      success: true,
+      message: "Question deleted successfully",
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
