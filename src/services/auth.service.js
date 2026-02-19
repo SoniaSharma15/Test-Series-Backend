@@ -8,39 +8,66 @@ import {
   resetPasswordTemplate
 } from "../utils/emailTemplates.js";
 
-export const registerService = async (data) => {
-  const { name, email, password,mobile } = data;
 
-  if(mobile.length!=10){
+export const registerService = async (data) => {
+  let { name, email, password, mobile } = data;
+
+  if (!name || !email || !password || !mobile) {
+    throw new Error("All fields are required");
+  }
+
+  // Normalize inputs
+  name = name.trim();
+  email = email.trim().toLowerCase();
+  mobile = mobile.trim();
+
+  // Validate mobile (Indian 10-digit format)
+  const mobileRegex = /^[6-9]\d{9}$/;
+  if (!mobileRegex.test(mobile)) {
     throw new Error("Invalid mobile number");
   }
-  const existingUser = await User.findOne({
-    email: email.trim().toLowerCase(),
-  });
 
-  if (existingUser) {
+  // Check existing email
+  const existingEmail = await User.findOne({ email });
+  if (existingEmail) {
     throw new Error("Email already registered");
   }
 
+  // Check existing mobile
+  const existingMobile = await User.findOne({ mobile });
+  if (existingMobile) {
+    throw new Error("Mobile number already registered");
+  }
+
+  // Hash password
   const hashedPassword = await bcrypt.hash(password, 12);
 
+  // Create user
   const user = await User.create({
     name,
-    email: email.trim().toLowerCase(),
+    email,
+    mobile,
     password: hashedPassword,
     mobile
   });
 
+  // Generate JWT
   const token = generateToken(user._id);
 
-  await sendEmail(
+  // Send welcome email (non-blocking)
+  sendEmail(
     user.email,
     "🎉 Welcome to Brilliant Test Series",
     registrationTemplate(user.name)
-  );
+  ).catch((err) => console.error("Email failed:", err.message));
 
-  return { user, token };
+  // Remove password before returning
+  const safeUser = user.toObject();
+  delete safeUser.password;
+
+  return { user: safeUser, token };
 };
+
 
 
 export const loginService = async (data) => {

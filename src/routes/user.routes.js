@@ -4,6 +4,7 @@ import {
   assignTestSeries,
   changeStudentPassword,
   createUserByAdmin,
+  getAllUsers ,
 } from "../controllers/user.controller.js";
 
 import { protect } from "../middlewares/auth.middleware.js";
@@ -17,6 +18,13 @@ router.get(
   protect,
   authorizeRole("admin"),
   getStudentByEmail
+);
+
+router.get(
+  "/all-users",
+  protect,
+  authorizeRole("admin"),
+  getAllUsers
 );
 
 router.post(

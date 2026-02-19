@@ -55,61 +55,75 @@ export const getPerformance = async (req, res) => {
   try {
     const studentId = req.user._id;
 
-    const attempts = await Attempt.find({ studentId });
+    // ✅ Only completed attempts
+    const attempts = await Attempt.find({
+      studentId,
+      status: { $in: ["COMPLETED", "AUTO_SUBMITTED"] }
+    }).populate({
+      path: "testId",
+      populate: {
+        path: "testSeriesId",
+        select: "title"
+      }
+    });
 
     const totalAttempts = attempts.length;
 
-    let averageScore = 0;
+    let totalPercentage = 0;
     let highestScore = 0;
     let passCount = 0;
 
     for (const attempt of attempts) {
-      averageScore += attempt.score;
+      const percentage =
+        attempt.totalMarks > 0
+          ? (attempt.obtainedMarks / attempt.totalMarks) * 100
+          : 0;
 
-      if (attempt.score > highestScore) {
-        highestScore = attempt.score;
+      totalPercentage += percentage;
+
+      if (percentage > highestScore) {
+        highestScore = percentage;
       }
 
-      const test = await Test.findById(attempt.testId);
-
-      if (test && attempt.score >= test.passingMarks) {
+      if (
+        attempt.testId &&
+        percentage >= attempt.testId.passingMarks
+      ) {
         passCount++;
       }
     }
 
-    if (totalAttempts > 0) {
-      averageScore = averageScore / totalAttempts;
-    }
+    const averageScore =
+      totalAttempts > 0
+        ? totalPercentage / totalAttempts
+        : 0;
 
     const passFailRatio =
       totalAttempts > 0
         ? `${passCount}/${totalAttempts}`
         : "0/0";
 
-    const recentResults = attempts
-      .sort((a, b) => b.submittedAt - a.submittedAt)
-      .slice(0, 5);
+    // ✅ Sort by latest
+    const sortedAttempts = attempts.sort(
+      (a, b) => new Date(b.submittedAt) - new Date(a.submittedAt)
+    );
 
-      // ✅ GET LATEST ATTEMPT WITH BATCH + TEST NAME
-const latestAttempt = await Attempt.findOne({
-  studentId,
-  status: { $in: ["COMPLETED", "AUTO_SUBMITTED"] }
-})
-  .sort({ submittedAt: -1 })
-  .populate({
-    path: "testId",
-    populate: {
-      path: "testSeriesId",
-      select: "title"
-    }
-  });
+    const recentResults = sortedAttempts
+      .slice(0, 5)
+      .map((attempt) => ({
+        score:
+          attempt.totalMarks > 0
+            ? (attempt.obtainedMarks / attempt.totalMarks) * 100
+            : 0,
+      }));
 
-const latestBatchName =
-  latestAttempt?.testId?.testSeriesId?.title || "N/A";
+    const latestAttempt = sortedAttempts[0];
 
-const latestTestName =
-  latestAttempt?.testId?.name || "N/A";
+    const latestBatchName =
+      latestAttempt?.testId?.testSeriesId?.title || "N/A";
 
+    const latestTestName =
+      latestAttempt?.testId?.name || "N/A";
 
     res.json({
       totalAttempts,
@@ -117,13 +131,14 @@ const latestTestName =
       highestScore,
       passFailRatio,
       recentResults,
-        latestBatchName,     // ✅ ADD THIS
-  latestTestName       // ✅ ADD THIS
+      latestBatchName,
+      latestTestName,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
+
 
 export const getExamData = async (req, res) => {
   try {
@@ -430,20 +445,34 @@ export const getRecentPerformance = async (req, res) => {
       return res.json(null);
     }
 
-    const timeSpent =
-      (new Date(attempt.submittedAt) - new Date(attempt.startedAt)) / 60000;
+    // ✅ Calculate percentage safely
+    const percentage =
+      attempt.totalMarks > 0
+        ? (attempt.obtainedMarks / attempt.totalMarks) * 100
+        : 0;
+
+    // ✅ Calculate time safely
+    let timeSpent = 0;
+    if (attempt.startedAt && attempt.submittedAt) {
+      timeSpent =
+        (new Date(attempt.submittedAt) - new Date(attempt.startedAt)) /
+        60000;
+    }
 
     res.json({
       batchName: attempt.testId?.testSeriesId?.title || "N/A",
       testName: attempt.testId?.name || "N/A",
-      score: attempt.score,
-      timeSpent: Math.round(timeSpent),
-      attempted: attempt.attemptedCount,
-      correct: attempt.correctCount,
-      wrong: attempt.wrongCount,
+      score: Number(percentage.toFixed(1)), // percentage score
+      timeSpent: Math.max(0, Math.round(timeSpent)),
+      attempted: attempt.attemptedCount || 0,
+      correct: attempt.correctCount || 0,
+      wrong: attempt.wrongCount || 0,
+      totalMarks: attempt.totalMarks || 0,
+      obtainedMarks: attempt.obtainedMarks || 0,
     });
 
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
+
