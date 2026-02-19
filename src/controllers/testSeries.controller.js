@@ -1,4 +1,3 @@
-import cloudinary from "../config/cloudinary.js";
 import TestSeries from "../models/TestSeries.js";
 import Enrollment from "../models/Enrollment.js";
 
@@ -146,7 +145,6 @@ export const getAllTestSeries = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-
 
 
 export const getSingleTestSeries = async (req, res) => {

@@ -27,7 +27,36 @@ const normalizeLang = (req) => {
     .trim()
     .toLowerCase();
 
+  // detect dual/bilingual automatically when payload contains both languages
+  const detectDualFromBody = () => {
+    try {
+      const qText = parseIfJSON(req.body.questionText) || {};
+      const opts = parseIfJSON(req.body.options) || [];
+      const metaHi = (parseIfJSON(req.body.meta) || {}).hi || {};
+
+      const hasQEn = String(qText.english || "").trim().length > 0;
+      const hasQHi = String(qText.hindi || "").trim().length > 0;
+
+      // require both languages for options if present
+      const optsBoth =
+        Array.isArray(opts) &&
+        opts.length === 4 &&
+        opts.every((o) => String(o?.english || "").trim().length > 0 && String(o?.hindi || "").trim().length > 0);
+
+      const metaHiPresent = String(metaHi.assertionText || "").trim().length > 0 || String(metaHi.reasonText || "").trim().length > 0 || String(metaHi.questionText || "").trim().length > 0;
+
+      return (hasQEn && hasQHi) || optsBoth || metaHiPresent;
+    } catch {
+      return false;
+    }
+  };
+
   if (raw === "hi" || raw === "hindi") return "hindi";
+  if (raw === "dual" || raw === "bilingual" || raw === "both") return "dual";
+
+  // if payload itself contains both languages, treat as dual
+  if (detectDualFromBody()) return "dual";
+
   return "english"; // default
 };
 
@@ -36,6 +65,11 @@ const getOptText = (opt, lang) => String(opt?.[lang] || "").trim();
 const validateOptions4ByLang = (options, lang) => {
   if (!Array.isArray(options) || options.length !== 4) return false;
   // ✅ selected language required, other can be empty
+  if (lang === "dual") {
+    // require both english and hindi present for each option
+    return options.every((o) => String(o?.english || "").trim().length > 0 && String(o?.hindi || "").trim().length > 0);
+  }
+
   return options.every((o) => getOptText(o, lang).length > 0);
 };
 
@@ -74,7 +108,29 @@ const validateMSQAnswersByLang = (options, correctAnswers, lang) => {
   if (new Set(cleaned).size !== cleaned.length) return false;
 
   // ✅ must match options in selected language
+  if (lang === "dual") {
+    const optEn = options.map((o) => String(o?.english || "").trim());
+    const optHi = options.map((o) => String(o?.hindi || "").trim());
+    return cleaned.every((ans) => optEn.includes(ans) || optHi.includes(ans));
+  }
+
   return cleaned.every((ans) => optList.includes(ans));
+};
+
+const mapMSQAnswersToEnglish = (options, answers) => {
+  const en = options.map((o) => String(o?.english || "").trim());
+  const hi = options.map((o) => String(o?.hindi || "").trim());
+  return ensureArray(answers)
+    .map((a) => String(a || "").trim())
+    .map((val) => {
+      if (!val) return null;
+      const iEn = en.indexOf(val);
+      if (iEn >= 0) return en[iEn];
+      const iHi = hi.indexOf(val);
+      if (iHi >= 0) return en[iHi];
+      return null;
+    })
+    .filter(Boolean);
 };
 
 /* =========================
@@ -125,11 +181,31 @@ export const createQuestion = async (req, res) => {
       }
 
       // ✅ strict: correctAnswer must match selected-language option
-      const optList = opts.map((o) => getOptText(o, lang));
+      let optList = [];
+      if (lang === "dual") {
+        optList = opts
+          .flatMap((o) => [String(o?.english || "").trim(), String(o?.hindi || "").trim()])
+          .filter(Boolean);
+      } else {
+        optList = opts.map((o) => getOptText(o, lang));
+      }
+
       if (!optList.includes(ca)) {
         return res.status(400).json({
           message: `Correct answer must match a ${lang} option`,
         });
+      }
+
+      // For Assertion–Reason ensure both languages present in dual mode
+      if (type === "ASSERTION_REASON" && lang === "dual") {
+        const qText = parseIfJSON(req.body.questionText) || {};
+        const meta = parseIfJSON(req.body.meta) || {};
+        const hiMeta = meta.hi || {};
+        const hasEn = String(qText.english || "").trim().length > 0;
+        const hasHi = String(qText.hindi || "").trim().length > 0 || String(hiMeta.assertionText || "").trim().length > 0 || String(hiMeta.reasonText || "").trim().length > 0;
+        if (!hasEn || !hasHi) {
+          return res.status(400).json({ message: "ASSERTION_REASON requires both English and Hindi assertion/reason in dual mode" });
+        }
       }
 
       req.body.options = opts;
@@ -155,7 +231,12 @@ export const createQuestion = async (req, res) => {
 
       req.body.options = opts;
       req.body.correctAnswer = ""; // keep clean
-      req.body.correctAnswers = answers;
+      // When bilingual/dual, normalize stored answers to English text
+      if (lang === "dual") {
+        req.body.correctAnswers = mapMSQAnswersToEnglish(opts, answers);
+      } else {
+        req.body.correctAnswers = answers;
+      }
     }
 
     if (type === "PASSAGE") {
@@ -163,6 +244,14 @@ export const createQuestion = async (req, res) => {
       req.body.options = ensureArray(req.body.options);
       req.body.correctAnswer = String(req.body.correctAnswer || "").trim();
       req.body.correctAnswers = normalizeCorrectAnswers(req.body.correctAnswers);
+
+      // if bilingual/dual, ensure passage text exists in both languages
+      const qText = parseIfJSON(req.body.questionText) || {};
+      if (lang === "dual") {
+        if (!String(qText.english || "").trim() || !String(qText.hindi || "").trim()) {
+          return res.status(400).json({ message: "PASSAGE requires both English and Hindi passage text in dual mode" });
+        }
+      }
     }
 
     const question = await Question.create(req.body);
@@ -221,11 +310,31 @@ export const updateQuestion = async (req, res) => {
         return res.status(400).json({ message: "Correct answer required" });
       }
 
-      const optList = opts.map((o) => getOptText(o, lang));
+      let optList = [];
+      if (lang === "dual") {
+        optList = opts
+          .flatMap((o) => [String(o?.english || "").trim(), String(o?.hindi || "").trim()])
+          .filter(Boolean);
+      } else {
+        optList = opts.map((o) => getOptText(o, lang));
+      }
+
       if (!optList.includes(ca)) {
         return res.status(400).json({
           message: `Correct answer must match a ${lang} option`,
         });
+      }
+
+      // For Assertion–Reason ensure both languages present in dual mode
+      if (type === "ASSERTION_REASON" && lang === "dual") {
+        const qText = parseIfJSON(req.body.questionText) || {};
+        const meta = parseIfJSON(req.body.meta) || {};
+        const hiMeta = meta.hi || {};
+        const hasEn = String(qText.english || "").trim().length > 0;
+        const hasHi = String(qText.hindi || "").trim().length > 0 || String(hiMeta.assertionText || "").trim().length > 0 || String(hiMeta.reasonText || "").trim().length > 0;
+        if (!hasEn || !hasHi) {
+          return res.status(400).json({ message: "ASSERTION_REASON requires both English and Hindi assertion/reason in dual mode" });
+        }
       }
 
       req.body.options = opts;
@@ -251,13 +360,24 @@ export const updateQuestion = async (req, res) => {
 
       req.body.options = opts;
       req.body.correctAnswer = "";
-      req.body.correctAnswers = answers;
+      if (lang === "dual") {
+        req.body.correctAnswers = mapMSQAnswersToEnglish(opts, answers);
+      } else {
+        req.body.correctAnswers = answers;
+      }
     }
 
     if (type === "PASSAGE") {
       req.body.options = ensureArray(req.body.options);
       req.body.correctAnswer = String(req.body.correctAnswer || "").trim();
       req.body.correctAnswers = normalizeCorrectAnswers(req.body.correctAnswers);
+
+      const qText = parseIfJSON(req.body.questionText) || {};
+      if (lang === "dual") {
+        if (!String(qText.english || "").trim() || !String(qText.hindi || "").trim()) {
+          return res.status(400).json({ message: "PASSAGE requires both English and Hindi passage text in dual mode" });
+        }
+      }
     }
 
     const updated = await Question.findByIdAndUpdate(req.params.id, req.body, {
