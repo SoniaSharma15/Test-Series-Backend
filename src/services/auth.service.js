@@ -9,8 +9,11 @@ import {
 } from "../utils/emailTemplates.js";
 
 export const registerService = async (data) => {
-  const { name, email, password } = data;
+  const { name, email, password,mobile } = data;
 
+  if(mobile.length!=10){
+    throw new Error("Invalid mobile number");
+  }
   const existingUser = await User.findOne({
     email: email.trim().toLowerCase(),
   });
@@ -25,6 +28,7 @@ export const registerService = async (data) => {
     name,
     email: email.trim().toLowerCase(),
     password: hashedPassword,
+    mobile
   });
 
   const token = generateToken(user._id);

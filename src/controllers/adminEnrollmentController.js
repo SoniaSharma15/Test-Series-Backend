@@ -147,7 +147,6 @@ export const getAllEnrollments = async (req, res) => {
           { $group: { _id: null, total: { $sum: "$amount" } } },
         ],
 
-        // ✅ removed expiredCount completely
       },
     });
 
@@ -180,7 +179,6 @@ export const getAllEnrollments = async (req, res) => {
   }
 };
 
-// ✅ renewEnrollment removed completely
 
 // 3️⃣ Update status
 export const updateEnrollmentStatus = async (req, res) => {

@@ -19,9 +19,9 @@ export const createUserByAdmin = async (req, res) => {
   session.startTransaction();
 
   try {
-    const { name, email, password, role, testSeriesId } = req.body;
+    const { name, email, password, role, testSeriesId,mobile } = req.body;
 
-    if (!name || !email || !password || !role) {
+    if (!name || !email || !password || !role || !mobile) {
       return res.status(400).json({
         success: false,
         message: "All fields are required",
