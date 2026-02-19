@@ -11,10 +11,37 @@ export const getAdminDashboard = async (req, res) => {
     const totalTestSeries = await TestSeries.countDocuments();
     const totalTests = await Test.countDocuments();
 
-    const revenue = await Payment.aggregate([
+    // ✅ TOTAL REVENUE
+    const revenueAgg = await Payment.aggregate([
       { $group: { _id: null, total: { $sum: "$amount" } } },
     ]);
-    const totalRevenue = revenue?.[0]?.total || 0;
+    const totalRevenue = revenueAgg?.[0]?.total || 0;
+
+    // ✅ DAY-WISE REVENUE (last 7 days – you can change to 30)
+    const fromDate = new Date();
+    fromDate.setDate(fromDate.getDate() - 6);
+    fromDate.setHours(0, 0, 0, 0);
+
+    const dailyRevenue = await Payment.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: fromDate },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            $dateToString: {
+              format: "%Y-%m-%d",
+              date: "$createdAt",
+              timezone: "Asia/Kolkata",
+            },
+          },
+          total: { $sum: "$amount" },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
 
     const recentEnrollments = await Enrollment.find()
       .sort({ createdAt: -1 })
@@ -33,6 +60,7 @@ export const getAdminDashboard = async (req, res) => {
       totalTestSeries,
       totalTests,
       totalRevenue,
+      dailyRevenue, // ✅ NEW FIELD
       recentEnrollments,
       recentAttempts,
     });
@@ -40,3 +68,4 @@ export const getAdminDashboard = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
+

@@ -48,6 +48,7 @@ export const registerService = async (data) => {
     email,
     mobile,
     password: hashedPassword,
+    mobile
   });
 
   // Generate JWT

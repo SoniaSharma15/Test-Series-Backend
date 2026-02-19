@@ -249,19 +249,27 @@ export const updateQuestion = async (req, res) => {
         message: "Question not found",
       });
     }
-
-    if (typeof data.options === "string") {
-      data.options = JSON.parse(data.options);
-    }
-
-    if (typeof data.correctAnswers === "string") {
-      data.correctAnswers = JSON.parse(data.correctAnswers);
-    }
-
-    if (typeof data.passageQuestions === "string") {
-      data.passageQuestions = JSON.parse(data.passageQuestions);
-    }
-
+        // ✅ SAFE JSON PARSE (same as create)
+    const fieldsToParse = [
+      "options",
+      "correctAnswers",
+      "passageQuestions",
+      "questionText",
+      "assertion",
+      "reason",
+      "explanation",
+      "passageText",
+    ];
+  fieldsToParse.forEach((field) => {
+      if (typeof data[field] === "string") {
+        try {
+          data[field] = JSON.parse(data[field]);
+        } catch (err) {
+          // keep as-is if parsing fails
+        }
+      }
+    });
+   
     // If new image uploaded → delete old image
     if (req.uploadedFile) {
       if (existing.imagePublicId) {
