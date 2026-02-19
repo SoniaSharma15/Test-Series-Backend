@@ -87,52 +87,80 @@ export const loginService = async (data) => {
 
 
 export const forgotPasswordService = async (email) => {
-  const user = await User.findOne({
-    email: email.trim().toLowerCase(),
-  });
+  try {
+    const normalizedEmail = email.trim().toLowerCase();
 
-  if (!user) throw new Error("User not found");
+    const user = await User.findOne({ email: normalizedEmail });
 
-  const resetToken = crypto.randomBytes(32).toString("hex");
+    // 🔐 Always return true (prevent email enumeration attack)
+    if (!user) return true;
 
-  user.resetPasswordToken = resetToken;
-  user.resetPasswordExpiry = Date.now() + 15 * 60 * 1000;
+    // Generate raw token
+    const resetToken = crypto.randomBytes(32).toString("hex");
 
-  await user.save();
+    // Hash token before saving in DB (VERY IMPORTANT)
+    const hashedToken = crypto
+      .createHash("sha256")
+      .update(resetToken)
+      .digest("hex");
 
-  // ✅ TAKE URL FROM ENV
-  const frontendUrl = process.env.FRONTEND_URL;
+    await User.findByIdAndUpdate(user._id, {
+      resetPasswordToken: hashedToken,
+      resetPasswordExpiry: Date.now() + 15 * 60 * 1000,
+    });
 
-  if (!frontendUrl) {
-    throw new Error("FRONTEND_URL is not defined in .env");
+
+    const frontendUrl = process.env.FRONTEND_URL;
+
+    if (!frontendUrl) {
+      throw new Error("FRONTEND_URL is not defined in .env");
+    }
+
+    const resetLink = `${frontendUrl}/reset-password/${resetToken}`;
+
+    await sendEmail(
+      user.email,
+      "🔐 Reset Your Password - Brilliant Test Series",
+      resetPasswordTemplate(user.name, resetLink)
+    );
+
+    return true;
+  } catch (error) {
+    console.error("Forgot Password Error:", error.message);
+    throw new Error("Failed to process forgot password request");
   }
-
-  const resetLink = `${frontendUrl}/reset-password/${resetToken}`;
-
-  await sendEmail(
-    user.email,
-    "🔐 Reset Your Password - Brilliant Test Series",
-    resetPasswordTemplate(user.name, resetLink)
-  );
-
-  return true;
 };
 
 
-
 export const resetPasswordService = async (token, newPassword) => {
-  const user = await User.findOne({
-    resetPasswordToken: token,
-    resetPasswordExpiry: { $gt: Date.now() },
-  });
+  try {
+    // 🔐 Hash incoming token before searching
+    const hashedToken = crypto
+      .createHash("sha256")
+      .update(token)
+      .digest("hex");
 
-  if (!user) throw new Error("Invalid or expired token");
+    const user = await User.findOne({
+      resetPasswordToken: hashedToken,
+      resetPasswordExpiry: { $gt: Date.now() },
+    });
 
-  user.password = await bcrypt.hash(newPassword, 10);
-  user.resetPasswordToken = undefined;
-  user.resetPasswordExpiry = undefined;
+    if (!user) {
+      throw new Error("Invalid or expired token");
+    }
 
-  await user.save();
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-  return true;
+    // ✅ Use findByIdAndUpdate (avoid validation issue)
+    await User.findByIdAndUpdate(user._id, {
+      password: hashedPassword,
+      resetPasswordToken: null,
+      resetPasswordExpiry: null,
+    });
+
+    return true;
+  } catch (error) {
+    console.error("Reset Password Error:", error.message);
+    throw new Error("Failed to reset password");
+  }
 };

@@ -226,8 +226,18 @@ export const submitAttempt = async (req, res) => {
 
     for (const ans of answers) {
       const key = `${ans.questionId}_${ans.childIndex ?? "main"}`;
-      answerMap.set(key, ans.selectedAnswers || []);
+
+      let selected = [];
+
+      if (Array.isArray(ans.selectedAnswers)) {
+        selected = ans.selectedAnswers;
+      } else if (ans.selectedAnswer) {
+        selected = [ans.selectedAnswer];
+      }
+
+      answerMap.set(key, selected);
     }
+
 
     /* =====================================================
        SCORING
@@ -314,10 +324,6 @@ export const submitAttempt = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-
-
-
-
 
 
 export const getResult = async (req, res) => {
