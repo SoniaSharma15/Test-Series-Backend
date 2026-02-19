@@ -10,96 +10,179 @@ import {
   adminPasswordChangedTemplate,
 } from "../utils/emailTemplates.js";
 
+
+/* ==========================================
+   GET ALL USERS (Admin Only)
+========================================== */
+export const getAllUsers = async (req, res) => {
+  try {
+    const users = await User.find({})
+      .select("-password -resetPasswordToken -resetPasswordExpiry")
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: users.length,
+      data: users,
+    });
+  } catch (error) {
+    console.error("Get Users Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch users",
+    });
+  }
+};
+
 /* --------------------------------------------
    1️⃣ Get Student By Email
 ---------------------------------------------*/
 
 export const createUserByAdmin = async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
   try {
-    const { name, email, password, role, testSeriesId } = req.body;
+    const { name, email, password, role, testSeriesId, mobile } = req.body;
 
-    if (!name || !email || !password || !role) {
+    /* ================= VALIDATION ================= */
+
+    if (!name || !email || !password || !role || !mobile) {
       return res.status(400).json({
         success: false,
-        message: "All fields are required",
+        message: "All required fields must be provided",
+      });
+    }
+
+    if (!["admin", "student"].includes(role)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid role",
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 6 characters",
       });
     }
 
     const normalizedEmail = email.trim().toLowerCase();
+    const normalizedMobile = mobile.trim();
 
-    const existing = await User.findOne({ email: normalizedEmail });
-    if (existing) {
+    // Indian 10 digit validation
+    const mobileRegex = /^[6-9]\d{9}$/;
+    if (!mobileRegex.test(normalizedMobile)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid mobile number",
+      });
+    }
+
+    /* ================= CHECK EXISTING ================= */
+
+    const existingEmail = await User.findOne({ email: normalizedEmail });
+    if (existingEmail) {
       return res.status(409).json({
         success: false,
         message: "Email already exists",
       });
     }
 
+    const existingMobile = await User.findOne({ mobile: normalizedMobile });
+    if (existingMobile) {
+      return res.status(409).json({
+        success: false,
+        message: "Mobile number already exists",
+      });
+    }
+
+    /* ================= HASH PASSWORD ================= */
+
     const hashedPassword = await bcrypt.hash(password, 12);
 
-    const newUser = await User.create(
-      [{
-        name,
-        email: normalizedEmail,
-        password: hashedPassword,
-        role,
-      }],
-      { session }
-    );
+    /* ================= CREATE USER ================= */
+
+    const newUser = await User.create({
+      name: name.trim(),
+      email: normalizedEmail,
+      mobile: normalizedMobile,
+      password: hashedPassword,
+      role,
+    });
 
     let courseTitle = null;
 
-    if (role === "student" && testSeriesId) {
-      const enrollment = await Enrollment.create(
-        [{
-          studentId: newUser[0]._id,
-          testSeriesId,
-          source: "admin",
-          amount: 0,
-          status: "active",
-        }],
-        { session }
-      );
+    /* ================= AUTO ENROLL IF STUDENT ================= */
 
-      // Get Course Title
-      const series = await mongoose.model("TestSeries").findById(testSeriesId);
-      courseTitle = series?.title || null;
+    if (role === "student" && testSeriesId) {
+      try {
+        const series = await TestSeries.findById(testSeriesId);
+
+        if (series) {
+          await Enrollment.create({
+            studentId: newUser._id,
+            testSeriesId,
+            source: "admin",
+            amount: 0,
+            status: "active",
+          });
+
+          await TestSeries.findByIdAndUpdate(testSeriesId, {
+            $inc: { totalEnrollments: 1 },
+          });
+
+          courseTitle = series.title;
+        }
+      } catch (enrollmentError) {
+        if (enrollmentError.code !== 11000) {
+          console.error("Enrollment error:", enrollmentError);
+        }
+      }
     }
 
-    await session.commitTransaction();
-    session.endSession();
+    /* ================= SEND EMAIL SAFELY ================= */
 
-    // ✅ Send Detailed Email
-    await sendEmail(
-      normalizedEmail,
-      "🎉 Your Account Has Been Created",
-      adminCreatedAccountTemplate({
-        name,
-        email: normalizedEmail,
-        password, // plain password sent
-        role,
-        courseTitle,
-      })
-    );
+    try {
+      await sendEmail(
+        normalizedEmail,
+        "🎉 Your Account Has Been Created",
+        adminCreatedAccountTemplate({
+          name,
+          email: normalizedEmail,
+          mobile: normalizedMobile, // ✅ optional if you want in template
+          password, // intentionally sending plain password
+          role,
+          courseTitle,
+        })
+      );
+    } catch (emailError) {
+      console.error("Email failed but user created:", emailError);
+    }
 
-    res.status(201).json({
+    /* ================= RESPONSE ================= */
+
+    return res.status(201).json({
       success: true,
       message: "User created successfully",
+      data: {
+        id: newUser._id,
+        name: newUser.name,
+        email: newUser.email,
+        mobile: newUser.mobile,
+        role: newUser.role,
+      },
     });
 
   } catch (error) {
-    await session.abortTransaction();
-    session.endSession();
+    console.error("CreateUserByAdmin Error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to create user",
     });
   }
 };
+
+
 
 
 
@@ -146,9 +229,6 @@ export const getStudentByEmail = async (req, res) => {
    2️⃣ Assign Test Series
 ---------------------------------------------*/
 export const assignTestSeries = async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
   try {
     const { studentId, testSeriesId } = req.body;
 
@@ -156,16 +236,6 @@ export const assignTestSeries = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "StudentId and TestSeriesId are required",
-      });
-    }
-
-    if (
-      !mongoose.Types.ObjectId.isValid(studentId) ||
-      !mongoose.Types.ObjectId.isValid(testSeriesId)
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid ID format",
       });
     }
 
@@ -181,45 +251,17 @@ export const assignTestSeries = async (req, res) => {
       });
     }
 
-    const existing = await Enrollment.findOne({
+    await Enrollment.create({
       studentId,
       testSeriesId,
+      amount: 0,
+      source: "admin",
+      status: "active",
     });
 
-    if (existing) {
-      return res.status(409).json({
-        success: false,
-        message: "Test series already assigned",
-      });
-    }
-
-    await Enrollment.create(
-      [{
-        studentId,
-        testSeriesId,
-        amount: 0,
-        source: "admin",
-        status: "active",
-      }],
-      { session }
-    );
-
-    await session.commitTransaction();
-    session.endSession();
-
-    // 🔥 Fetch Course Title
-    const series = await TestSeries.findById(testSeriesId);
-
-    // ✅ Send Detailed Email
-    await sendEmail(
-      student.email,
-      "🎓 New Course Assigned",
-      courseAssignedTemplate({
-        name: student.name,
-        email: student.email,
-        courseTitle: series?.title || "Your Assigned Course",
-      })
-    );
+    await TestSeries.findByIdAndUpdate(testSeriesId, {
+      $inc: { totalEnrollments: 1 },
+    });
 
     return res.status(201).json({
       success: true,
@@ -227,10 +269,16 @@ export const assignTestSeries = async (req, res) => {
     });
 
   } catch (error) {
-    await session.abortTransaction();
-    session.endSession();
 
     console.error("AssignTestSeries Error:", error);
+
+    // ✅ Duplicate enrollment error
+    if (error.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: "Test series already assigned",
+      });
+    }
 
     return res.status(500).json({
       success: false,
@@ -238,6 +286,7 @@ export const assignTestSeries = async (req, res) => {
     });
   }
 };
+
 
 
 
