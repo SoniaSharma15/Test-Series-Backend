@@ -63,7 +63,7 @@ const questionSchema = new mongoose.Schema(
 
     negativeMarks: {
       type: Number,
-      default: 0,
+      default: 0.33,
     },
   },
   { timestamps: true }

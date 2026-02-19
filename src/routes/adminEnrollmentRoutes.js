@@ -2,7 +2,6 @@ import express from "express";
 import {
   getAllEnrollments,
   manualEnroll,
-  renewEnrollment,
   updateEnrollmentStatus,
 } from "../controllers/adminEnrollmentController.js";
 
@@ -18,10 +17,6 @@ router.get(
   authorizeRole("admin"),
   getAllEnrollments
 );
-router.patch("/:id/renew",protect,
-  authorizeRole("admin"), renewEnrollment);
-
-
 // Manual enroll student
 router.post(
   "/",

@@ -46,7 +46,6 @@ export const startAttempt = async (req, res) => {
 };
 
 
-
 export const getPerformance = async (req, res) => {
   try {
     const studentId = req.user._id;

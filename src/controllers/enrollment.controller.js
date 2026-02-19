@@ -91,7 +91,6 @@ export const getMyEnrollments = async (req, res) => {
     }
 
     res.json(result);
-
   } catch (error) {
     console.error("Get My Enrollments Error:", error);
     res.status(500).json({ message: error.message });
