@@ -184,7 +184,6 @@ export const getExamData = async (req, res) => {
 export const submitAttempt = async (req, res) => {
   try {
     const { attemptId, answers = [] } = req.body;
-    console.log("Received Answers:", answers);
 
     const attempt = await Attempt.findById(attemptId);
     if (!attempt)

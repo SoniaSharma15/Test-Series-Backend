@@ -37,7 +37,7 @@ export const sendEmail = async (
 
     const info = await mailTransporter.sendMail(mailOptions);
 
-    console.log("📧 Email sent:", info.messageId);
+ 
 
     return true;
   } catch (error) {

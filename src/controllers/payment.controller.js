@@ -22,7 +22,7 @@ export const getPaymentHistory = async (req, res) => {
       amount: p.amount,
       status: p.status,
       date: p.createdAt,
-      courseName: p.testSeriesId?.title || "N/A",
+      courseName: p.testSeriesId?.title || "Batch Expired",
       coursePrice: p.testSeriesId?.price || p.amount,
     }));
 

@@ -75,13 +75,12 @@ const validateQuestion = (data) => {
 
 
 export const createQuestion = async (req, res) => {
-  console.log("========== CREATE QUESTION START ==========");
+
 
   try {
     let data = { ...req.body };
 
-    console.log("Raw req.body:", req.body);
-    console.log("Uploaded File:", req.uploadedFile);
+
 
     /* =====================================================
        1️⃣ SAFE JSON PARSE (ALL POSSIBLE OBJECT FIELDS)
@@ -102,14 +101,14 @@ export const createQuestion = async (req, res) => {
       if (typeof data[field] === "string") {
         try {
           data[field] = JSON.parse(data[field]);
-          console.log(`Parsed field: ${field}`);
+          
         } catch (err) {
-          console.log(`Failed parsing field: ${field}`);
+          
         }
       }
     });
 
-    console.log("After parsing:", data);
+    
 
     /* =====================================================
        2️⃣ CLOUDINARY IMAGE
@@ -118,7 +117,7 @@ export const createQuestion = async (req, res) => {
     if (req.uploadedFile) {
       data.image = req.uploadedFile.url;
       data.imagePublicId = req.uploadedFile.publicId;
-      console.log("Image attached:", data.image);
+      
     }
 
     /* =====================================================
@@ -133,14 +132,14 @@ export const createQuestion = async (req, res) => {
       throw new Error("Question type missing");
     }
 
-    console.log("Type:", data.type);
+  
 
     /* =====================================================
        4️⃣ VALIDATION LOGIC
     ===================================================== */
 
     if (data.type === "PASSAGE") {
-      console.log("Validating PASSAGE...");
+    
 
       // if (!data.passageText?.english) {
       //   throw new Error("Passage text required");
@@ -151,7 +150,7 @@ export const createQuestion = async (req, res) => {
       }
 
       data.passageQuestions.forEach((q, index) => {
-        console.log(`Validating child question ${index}`);
+       
 
         validateOptions(q.options);
         validateCorrectAnswers(q.correctAnswers, q.options);
@@ -169,7 +168,7 @@ export const createQuestion = async (req, res) => {
       });
 
     } else {
-      console.log("Validating NORMAL question...");
+      
 
       validateOptions(data.options);
       validateCorrectAnswers(data.correctAnswers, data.options);
@@ -186,7 +185,7 @@ export const createQuestion = async (req, res) => {
       // }
     }
 
-    console.log("Validation passed ✔");
+    
 
     /* =====================================================
        5️⃣ CREATE IN DB
@@ -194,8 +193,7 @@ export const createQuestion = async (req, res) => {
 
     const question = await Question.create(data);
 
-    console.log("Question created:", question._id);
-    console.log("========== CREATE QUESTION SUCCESS ==========");
+    
 
     res.status(201).json({
       success: true,
@@ -204,9 +202,7 @@ export const createQuestion = async (req, res) => {
     });
 
   } catch (error) {
-    console.log("❌ CREATE QUESTION ERROR:", error.message);
-    console.log("Stack:", error.stack);
-    console.log("========== CREATE QUESTION FAILED ==========");
+
 
     res.status(400).json({
       success: false,
