@@ -4,7 +4,7 @@ import Payment from "../models/Payment.js";
 import Enrollment from "../models/Enrollment.js";
 import TestSeries from "../models/TestSeries.js";
 import { sendEmail } from "../services/email.service.js";
-import PDFDocument from "pdfkit";
+import { chromium } from "playwright";
 
 export const getPaymentHistory = async (req, res) => {
   try {
@@ -22,7 +22,7 @@ export const getPaymentHistory = async (req, res) => {
       amount: p.amount,
       status: p.status,
       date: p.createdAt,
-      courseName: p.testSeriesId?.title || "Batch Expired",
+      courseName: p.testSeriesId?.title || "N/A",
       coursePrice: p.testSeriesId?.price || p.amount,
     }));
 
@@ -283,169 +283,209 @@ export const downloadReceipt = async (req, res) => {
     const gstAmount = (totalPaid - basePrice).toFixed(2);
     const invoiceNumber = `INV-${payment.paymentId.slice(-6).toUpperCase()}`;
 
-    const doc = new PDFDocument({
-      size: "A4",
-      margin: 0,
+    // ===============================
+    // PREMIUM HTML TEMPLATE
+    // ===============================
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; }
+body {
+  font-family: 'Poppins', sans-serif;
+  margin: 0;
+  padding: 40px;
+  background: #f8fafc;
+}
+.invoice-container {
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 40px;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.08);
+  position: relative;
+}
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 40px;
+}
+.brand h1 {
+  margin: 0;
+  font-size: 28px;
+  color: #0f172a;
+}
+.brand span {
+  font-size: 12px;
+  color: #64748b;
+}
+.invoice-title {
+  text-align: right;
+}
+.invoice-title h2 {
+  margin: 0;
+  font-size: 24px;
+  color: #1e293b;
+}
+.meta {
+  font-size: 12px;
+  color: #64748b;
+  margin-top: 8px;
+}
+.bill-section {
+  margin: 30px 0;
+}
+.bill-section h3 {
+  font-size: 14px;
+  color: #0f172a;
+  margin-bottom: 8px;
+}
+.bill-info {
+  font-size: 13px;
+  color: #334155;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 30px;
+}
+th {
+  text-align: left;
+  padding: 12px;
+  background: #0f172a;
+  color: white;
+  font-size: 13px;
+}
+td {
+  padding: 12px;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 13px;
+}
+.right { text-align: right; }
+.total-row {
+  background: #1e293b;
+  color: white;
+  font-weight: 600;
+}
+.stamp {
+  position: absolute;
+  top: 50%;
+  right: 50px;
+  transform: rotate(-25deg);
+  font-size: 80px;
+  color: rgba(22, 163, 74, 0.08);
+  font-weight: 700;
+}
+.footer {
+  margin-top: 60px;
+  text-align: center;
+  font-size: 11px;
+  color: #94a3b8;
+}
+</style>
+</head>
+<body>
+<div class="invoice-container">
+<div class="stamp">PAID</div>
+
+<div class="header">
+  <div class="brand">
+    <h1>The Brilliant Bihar</h1>
+    <span>Premium Examination Preparation Platform</span>
+  </div>
+  <div class="invoice-title">
+    <h2>INVOICE</h2>
+    <div class="meta">
+      Invoice No: ${invoiceNumber}<br/>
+      Payment ID: ${payment.paymentId}<br/>
+      Order ID: ${payment.orderId}<br/>
+      Date: ${new Date(payment.createdAt).toDateString()}
+    </div>
+  </div>
+</div>
+
+<div class="bill-section">
+  <h3>BILL TO</h3>
+  <div class="bill-info">
+    ${req.user.name}<br/>
+    ${req.user.email}
+  </div>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Description</th>
+      <th class="right">Amount (₹)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>${payment.testSeriesId.title}</td>
+      <td class="right">${basePrice}</td>
+    </tr>
+    <tr>
+      <td>GST (18%)</td>
+      <td class="right">${gstAmount}</td>
+    </tr>
+    <tr class="total-row">
+      <td>Total Paid</td>
+      <td class="right">₹ ${totalPaid}</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="footer">
+Thank you for choosing The Brilliant Bihar.<br/>
+This is a digitally generated invoice and does not require signature.
+</div>
+
+</div>
+</body>
+</html>`;
+
+    // ===============================
+    // GENERATE PDF WITH PLAYWRIGHT
+    // ===============================
+
+    const browser = await chromium.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox"], // Required for Railway/VPS
     });
 
-    res.setHeader("Content-Disposition", `attachment; filename=invoice-${payment.paymentId}.pdf`);
-    res.setHeader("Content-Type", "application/pdf");
+    const page = await browser.newPage();
 
-    doc.pipe(res);
+    await page.setContent(html, {
+      waitUntil: "networkidle",
+    });
 
-    // ================= COLORS & BRANDING =================
-    const DEEP_NAVY = "#0f172a";
-    const ACCENT_BLUE = "#3b82f6";
-    const SUCCESS_GREEN = "#10b981";
-    const TEXT_LIGHT = "#64748b";
-    const BG_SOFT = "#f8fafc";
+    const pdfBuffer = await page.pdf({
+      format: "A4",
+      printBackground: true,
+      margin: {
+        top: "20px",
+        bottom: "20px",
+        left: "20px",
+        right: "20px",
+      },
+    });
 
-    // Header Background
-    doc.rect(0, 0, doc.page.width, 160).fill(DEEP_NAVY);
+    await browser.close();
 
-    // Brand Title
-    doc
-      .fillColor("#ffffff")
-      .fontSize(28)
-      .font("Helvetica-Bold")
-      .text("The Brilliant Bihar", 50, 50);
+    res.set({
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename=invoice-${payment.paymentId}.pdf`,
+      "Content-Length": pdfBuffer.length,
+    });
 
-    doc
-      .fontSize(10)
-      .font("Helvetica")
-      .fillColor(ACCENT_BLUE)
-      .text("Official Academic Transaction Receipt", 50, 85, { characterSpacing: 1 });
-
-    // Status Indicator
-    doc.circle(520, 70, 35).fill("#ffffff20");
-    doc
-      .fillColor("#ffffff")
-      .fontSize(10)
-      .font("Helvetica-Bold")
-      .text("PAID", 503, 65);
-
-    // ================= DESCRIPTIVE INFO PANEL =================
-    doc.rect(50, 180, 500, 100).fill(BG_SOFT);
-    
-    // LEFT: Billing To
-    doc
-      .fillColor(TEXT_LIGHT)
-      .fontSize(8)
-      .font("Helvetica-Bold")
-      .text("STUDENT DETAILS", 70, 200);
-
-    doc
-      .fillColor(DEEP_NAVY)
-      .fontSize(12)
-      .font("Helvetica-Bold")
-      .text(req.user.name.toUpperCase(), 70, 215)
-      .fontSize(10)
-      .font("Helvetica")
-      .text(req.user.email, 70, 230);
-
-    // RIGHT: Invoice Meta
-    doc
-      .fillColor(TEXT_LIGHT)
-      .fontSize(8)
-      .font("Helvetica-Bold")
-      .text("INVOICE SUMMARY", 350, 200);
-
-    doc
-      .fillColor(DEEP_NAVY)
-      .fontSize(10)
-      .font("Helvetica")
-      .text(`Invoice Number: ${invoiceNumber}`, 350, 215)
-      .text(`Date: ${new Date(payment.createdAt).toLocaleDateString("en-IN")}`, 350, 230)
-      .text(`Order ID: ${payment.orderId}`, 350, 245);
-
-    // ================= PRODUCT DESCRIPTION SECTION =================
-    doc.moveDown(8);
-    
-    doc
-      .fillColor(DEEP_NAVY)
-      .fontSize(11)
-      .font("Helvetica-Bold")
-      .text("ENROLLED SERVICE DESCRIPTION", 50, doc.y);
-
-    doc.rect(50, doc.y + 5, 500, 2).fill(ACCENT_BLUE);
-
-    const tableTop = doc.y + 20;
-
-    // Item Header
-    doc
-      .fillColor(TEXT_LIGHT)
-      .fontSize(9)
-      .font("Helvetica-Bold")
-      .text("PARTICULARS", 50, tableTop)
-      .text("AMOUNT (INR)", 450, tableTop, { align: "right", width: 100 });
-
-    // Item Content
-    doc
-      .fillColor(DEEP_NAVY)
-      .fontSize(13)
-      .font("Helvetica-Bold")
-      .text(payment.testSeriesId.title, 50, tableTop + 25);
-
-    doc
-      .fillColor(TEXT_LIGHT)
-      .fontSize(9)
-      .font("Helvetica")
-      .text("Full Access to Test Modules, Performance Analytics, and Detailed Solutions.", 50, tableTop + 45);
-
-    doc
-      .fillColor(DEEP_NAVY)
-      .fontSize(12)
-      .text(basePrice, 450, tableTop + 25, { align: "right", width: 100 });
-
-    // ================= FINANCIAL BREAKDOWN =================
-    const summaryY = tableTop + 100;
-
-    doc.rect(320, summaryY, 230, 120).strokeColor(BG_SOFT).stroke();
-
-    const drawRow = (label, value, y, isBold = false) => {
-      doc
-        .fillColor(isBold ? DEEP_NAVY : TEXT_LIGHT)
-        .fontSize(isBold ? 12 : 10)
-        .font(isBold ? "Helvetica-Bold" : "Helvetica")
-        .text(label, 340, y)
-        .text(value, 450, y, { align: "right", width: 90 });
-    };
-
-    drawRow("Sub-Total", basePrice, summaryY + 20);
-    drawRow("Tax (GST 18%)", gstAmount, summaryY + 45);
-    
-    doc.rect(340, summaryY + 70, 200, 1).fill(BG_SOFT);
-    drawRow("Total Amount", totalPaid, summaryY + 85, true);
-
-    // ================= SECURE VERIFICATION =================
-    const footerTop = 650;
-
-    doc.rect(50, footerTop, 200, 80).fill(BG_SOFT);
-    
-    doc
-      .fillColor(SUCCESS_GREEN)
-      .fontSize(8)
-      .font("Helvetica-Bold")
-      .text("✓ PAYMENT VERIFIED SECURE", 70, footerTop + 20);
-
-    doc
-      .fillColor(DEEP_NAVY)
-      .fontSize(7)
-      .font("Helvetica")
-      .text("Transaction completed via encrypted gateway.", 70, footerTop + 35)
-      .text(`Gateway Ref: ${payment.paymentId}`, 70, footerTop + 45);
-
-    // ================= FOOTER =================
-    doc
-      .fillColor(TEXT_LIGHT)
-      .fontSize(8)
-      .text("The Brilliant Bihar - Empowering Future Success", 0, 780, { align: "center", width: doc.page.width })
-      .text("This is a digitally signed document. No physical signature required. Currency: INR", 0, 792, { align: "center", width: doc.page.width });
-
-    doc.end();
+    return res.send(pdfBuffer);
 
   } catch (error) {
     console.error("PDF Generation Error:", error);
     return res.status(500).json({ message: error.message });
   }
 };
+
