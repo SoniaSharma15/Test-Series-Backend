@@ -82,40 +82,46 @@ const validateMSQAnswersByLang = (options, correctAnswers, lang) => {
 ========================= */
 export const createQuestion = async (req, res) => {
   try {
-    // ✅ multipart/form-data strings -> parse
+    req.body.passage = parseIfJSON(req.body.passage);
     req.body.questionText = parseIfJSON(req.body.questionText);
     req.body.options = parseIfJSON(req.body.options);
     req.body.meta = parseIfJSON(req.body.meta);
 
-    // ✅ numeric fields
     req.body.marks = toNumber(req.body.marks);
     req.body.negativeMarks = toNumber(req.body.negativeMarks);
 
     const type = String(req.body.type || "").trim();
-    const lang = normalizeLang(req); // ✅ "english" | "hindi"
+    const lang = normalizeLang(req);
 
-    // ✅ Store the question language for answer validation
     req.body.questionLang = lang;
 
-    // ✅ attach uploaded image info (from upload.middleware -> uploadToCloudinary)
     if (req.uploadedFile) {
       req.body.questionImage = req.uploadedFile;
     }
 
-    // ✅ normalize MSQ correctAnswers before validation
-    if (type === "MSQ") {
-      req.body.correctAnswers = normalizeCorrectAnswers(req.body.correctAnswers);
+    // ✅ PASSAGE GROUP SUPPORT
+    if (req.body.passageGroupId) {
+      req.body.passageGroupId = String(req.body.passageGroupId).trim();
+    } else {
+      req.body.passageGroupId = null;
+    }
+
+    // ❌ REMOVE PASSAGE TYPE COMPLETELY
+    if (type === "PASSAGE") {
+      return res.status(400).json({
+        message: "PASSAGE should not be separate type. Use passageGroupId."
+      });
     }
 
     // -------------------------
-    // VALIDATIONS by type
+    // MCQ / MATH / ASSERTION
     // -------------------------
     if (type === "MCQ" || type === "MATH" || type === "ASSERTION_REASON") {
       const opts = ensureArray(req.body.options);
 
       if (!validateOptions4ByLang(opts, lang)) {
         return res.status(400).json({
-          message: `${type} must have 4 options (${lang} required)`,
+          message: `${type} must have 4 options (${lang} required)`
         });
       }
 
@@ -124,49 +130,45 @@ export const createQuestion = async (req, res) => {
         return res.status(400).json({ message: "Correct answer required" });
       }
 
-      // ✅ strict: correctAnswer must match selected-language option
       const optList = opts.map((o) => getOptText(o, lang));
       if (!optList.includes(ca)) {
         return res.status(400).json({
-          message: `Correct answer must match a ${lang} option`,
+          message: `Correct answer must match ${lang} option`
         });
       }
 
       req.body.options = opts;
-      req.body.correctAnswers = []; // keep clean
+      req.body.correctAnswers = [];
     }
 
+    // -------------------------
+    // MSQ
+    // -------------------------
     if (type === "MSQ") {
       const opts = ensureArray(req.body.options);
 
       if (!validateOptions4ByLang(opts, lang)) {
         return res.status(400).json({
-          message: `MSQ must have 4 options (${lang} required)`,
+          message: `MSQ must have 4 options (${lang} required)`
         });
       }
 
-      const answers = ensureArray(req.body.correctAnswers);
+      const answers = normalizeCorrectAnswers(req.body.correctAnswers);
 
       if (!validateMSQAnswersByLang(opts, answers, lang)) {
         return res.status(400).json({
-          message: `MSQ correctAnswers required (min 2), unique, and must match ${lang} options`,
+          message: `MSQ needs min 2 valid correct answers`
         });
       }
 
       req.body.options = opts;
-      req.body.correctAnswer = ""; // keep clean
+      req.body.correctAnswer = "";
       req.body.correctAnswers = answers;
-    }
-
-    if (type === "PASSAGE") {
-      // Keep flexible for PASSAGE
-      req.body.options = ensureArray(req.body.options);
-      req.body.correctAnswer = String(req.body.correctAnswer || "").trim();
-      req.body.correctAnswers = normalizeCorrectAnswers(req.body.correctAnswers);
     }
 
     const question = await Question.create(req.body);
     return res.status(201).json(question);
+
   } catch (error) {
     if (error?.name === "ValidationError") {
       return res.status(400).json({ message: error.message });
@@ -175,12 +177,15 @@ export const createQuestion = async (req, res) => {
   }
 };
 
+
 /* =========================
    UPDATE
 ========================= */
 export const updateQuestion = async (req, res) => {
   try {
     req.body.questionText = parseIfJSON(req.body.questionText);
+    req.body.passage = parseIfJSON(req.body.passage);
+
     req.body.options = parseIfJSON(req.body.options);
     req.body.meta = parseIfJSON(req.body.meta);
 
@@ -254,11 +259,11 @@ export const updateQuestion = async (req, res) => {
       req.body.correctAnswers = answers;
     }
 
-    if (type === "PASSAGE") {
-      req.body.options = ensureArray(req.body.options);
-      req.body.correctAnswer = String(req.body.correctAnswer || "").trim();
-      req.body.correctAnswers = normalizeCorrectAnswers(req.body.correctAnswers);
-    }
+if (type === "PASSAGE") {
+  req.body.options = ensureArray(req.body.options);
+  req.body.correctAnswer = String(req.body.correctAnswer || "").trim();
+  req.body.correctAnswers = normalizeCorrectAnswers(req.body.correctAnswers);
+}
 
     const updated = await Question.findByIdAndUpdate(req.params.id, req.body, {
       new: true,

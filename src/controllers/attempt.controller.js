@@ -2,7 +2,9 @@ import Attempt from "../models/Attempt.js";
 import Question from "../models/Question.js";
 import Test from "../models/Test.js";
 
-/* 1️⃣ Start Attempt */
+/* =====================================================
+   1️⃣ START ATTEMPT
+===================================================== */
 export const startAttempt = async (req, res) => {
   try {
     const { testId } = req.body;
@@ -12,7 +14,6 @@ export const startAttempt = async (req, res) => {
     if (!test)
       return res.status(404).json({ message: "Test not found" });
 
-    // ❌ Prevent ANY previous attempt
     const existingAttempt = await Attempt.findOne({
       studentId,
       testId,
@@ -31,27 +32,31 @@ export const startAttempt = async (req, res) => {
       testId,
       attemptNumber: 1,
       duration: test.duration,
+      startedAt: new Date(),
       ipAddress: req.ip,
       userAgent: req.headers["user-agent"],
       lastHeartbeat: new Date(),
+      status: "IN_PROGRESS",
+      tabSwitchCount: 0,
+      fullscreenExitCount: 0,
     });
 
-    res.status(201).json({
-      attemptId: newAttempt._id,
-    });
+    res.status(201).json({ attemptId: newAttempt._id });
 
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-
-
+/* =====================================================
+   2️⃣ GET PERFORMANCE
+===================================================== */
 export const getPerformance = async (req, res) => {
   try {
     const studentId = req.user._id;
 
-    const attempts = await Attempt.find({ studentId });
+    const attempts = await Attempt.find({ studentId })
+      .populate("testId");
 
     const totalAttempts = attempts.length;
 
@@ -60,52 +65,44 @@ export const getPerformance = async (req, res) => {
     let passCount = 0;
 
     for (const attempt of attempts) {
-      averageScore += attempt.score;
+      const score = attempt.score || 0;
 
-      if (attempt.score > highestScore) {
-        highestScore = attempt.score;
-      }
+      averageScore += score;
+      if (score > highestScore) highestScore = score;
 
-      const test = await Test.findById(attempt.testId);
-
-      if (test && attempt.score >= test.passingMarks) {
+      if (
+        attempt.testId &&
+        score >= attempt.testId.passingMarks
+      ) {
         passCount++;
       }
     }
 
-    if (totalAttempts > 0) {
-      averageScore = averageScore / totalAttempts;
-    }
+    averageScore =
+      totalAttempts > 0
+        ? Number((averageScore / totalAttempts).toFixed(2))
+        : 0;
 
     const passFailRatio =
-      totalAttempts > 0
-        ? `${passCount}/${totalAttempts}`
-        : "0/0";
+      totalAttempts > 0 ? `${passCount}/${totalAttempts}` : "0/0";
 
     const recentResults = attempts
+      .filter(a => a.submittedAt)
       .sort((a, b) => b.submittedAt - a.submittedAt)
       .slice(0, 5);
 
-      // ✅ GET LATEST ATTEMPT WITH BATCH + TEST NAME
-const latestAttempt = await Attempt.findOne({
-  studentId,
-  status: { $in: ["COMPLETED", "AUTO_SUBMITTED"] }
-})
-  .sort({ submittedAt: -1 })
-  .populate({
-    path: "testId",
-    populate: {
-      path: "testSeriesId",
-      select: "title"
-    }
-  });
-
-const latestBatchName =
-  latestAttempt?.testId?.testSeriesId?.title || "N/A";
-
-const latestTestName =
-  latestAttempt?.testId?.name || "N/A";
-
+    const latestAttempt = await Attempt.findOne({
+      studentId,
+      status: { $in: ["COMPLETED", "AUTO_SUBMITTED"] }
+    })
+      .sort({ submittedAt: -1 })
+      .populate({
+        path: "testId",
+        populate: {
+          path: "testSeriesId",
+          select: "title"
+        }
+      });
 
     res.json({
       totalAttempts,
@@ -113,14 +110,20 @@ const latestTestName =
       highestScore,
       passFailRatio,
       recentResults,
-        latestBatchName,     // ✅ ADD THIS
-  latestTestName       // ✅ ADD THIS
+      latestBatchName:
+        latestAttempt?.testId?.testSeriesId?.title || "N/A",
+      latestTestName:
+        latestAttempt?.testId?.name || "N/A"
     });
+
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
+/* =====================================================
+   3️⃣ GET EXAM DATA
+===================================================== */
 export const getExamData = async (req, res) => {
   try {
     const { attemptId } = req.params;
@@ -128,56 +131,33 @@ export const getExamData = async (req, res) => {
     const attempt = await Attempt.findById(attemptId)
       .populate("testId");
 
-    if (!attempt) {
-      return res.status(404).json({
-        status: "NOT_FOUND",
-        message: "Attempt not found",
-      });
-    }
+    if (!attempt)
+      return res.status(404).json({ status: "NOT_FOUND" });
 
-    if (attempt.studentId.toString() !== req.user._id.toString()) {
-      return res.status(403).json({
-        status: "UNAUTHORIZED",
-        message: "Unauthorized access",
-      });
-    }
+    if (attempt.studentId.toString() !== req.user._id.toString())
+      return res.status(403).json({ status: "UNAUTHORIZED" });
 
-    // ✅ Handle completed
-    if (attempt.status === "COMPLETED" || attempt.status === "AUTO_SUBMITTED") {
-      return res.status(409).json({
-        status: "COMPLETED",
-        message: "Exam already submitted",
-      });
-    }
+    if (["COMPLETED", "AUTO_SUBMITTED"].includes(attempt.status))
+      return res.status(409).json({ status: "COMPLETED" });
 
-    // ✅ Handle terminated
-    if (attempt.status === "TERMINATED") {
-      return res.status(403).json({
-        status: "TERMINATED",
-        message: "Exam terminated due to violations",
-      });
-    }
+    if (attempt.status === "TERMINATED")
+      return res.status(403).json({ status: "TERMINATED" });
 
-    // ✅ Server-side time validation
-    const now = new Date();
-    const elapsed = (now - attempt.startedAt) / 1000;
+    const elapsed =
+      (Date.now() - new Date(attempt.startedAt)) / 1000;
 
     if (elapsed > attempt.duration * 60) {
       attempt.status = "AUTO_SUBMITTED";
       attempt.submittedAt = new Date();
       await attempt.save();
-
-      return res.status(409).json({
-        status: "TIME_EXPIRED",
-        message: "Time expired",
-      });
+      return res.status(409).json({ status: "TIME_EXPIRED" });
     }
 
     const questions = await Question.find({
-      testId: attempt.testId._id,
-    });
+      testId: attempt.testId._id
+    }).sort({ createdAt: 1 });
 
-    return res.json({
+    res.json({
       status: "ACTIVE",
       test: attempt.testId,
       questions,
@@ -186,30 +166,32 @@ export const getExamData = async (req, res) => {
     });
 
   } catch (error) {
-    return res.status(500).json({
+    res.status(500).json({
       status: "SERVER_ERROR",
       message: error.message,
     });
   }
 };
 
-
-
-
+/* =====================================================
+   4️⃣ SUBMIT ATTEMPT
+===================================================== */
 export const submitAttempt = async (req, res) => {
   try {
-    const { attemptId, answers } = req.body;
+    const { attemptId } = req.body;
+    const answers = Array.isArray(req.body.answers)
+      ? req.body.answers
+      : [];
 
     const attempt = await Attempt.findById(attemptId);
-
     if (!attempt)
       return res.status(404).json({ message: "Attempt not found" });
 
     if (attempt.status !== "IN_PROGRESS")
       return res.status(400).json({ message: "Already submitted" });
 
-    const now = new Date();
-    const elapsed = (now - attempt.startedAt) / 1000;
+    const elapsed =
+      (Date.now() - new Date(attempt.startedAt)) / 1000;
 
     attempt.status =
       elapsed > attempt.duration * 60
@@ -227,15 +209,19 @@ export const submitAttempt = async (req, res) => {
 
     questions.forEach((q) => {
       const studentAnswer = answers.find(
-        (a) => a.questionId.toString() === q._id.toString()
+        (a) => String(a.questionId) === String(q._id)
       );
 
-      // ✅ Check if answer exists based on question type
+      if (!studentAnswer) return;
+
       let hasAnswer = false;
+
       if (q.type === "MSQ") {
-        hasAnswer = studentAnswer && Array.isArray(studentAnswer.selectedAnswers) && studentAnswer.selectedAnswers.length > 0;
+        hasAnswer =
+          Array.isArray(studentAnswer.selectedAnswers) &&
+          studentAnswer.selectedAnswers.length > 0;
       } else {
-        hasAnswer = studentAnswer && studentAnswer.selectedAnswer;
+        hasAnswer = !!studentAnswer.selectedAnswer;
       }
 
       if (!hasAnswer) return;
@@ -245,58 +231,49 @@ export const submitAttempt = async (req, res) => {
       let isCorrect = false;
 
       if (q.type === "MSQ") {
-        // ✅ For MSQ: check if all selected answers match correctAnswers
-        const correctSet = new Set(
-          Array.isArray(q.correctAnswers) ? q.correctAnswers : []
+        const correctSet = new Set(q.correctAnswers || []);
+        const selectedSet = new Set(
+          studentAnswer.selectedAnswers || []
         );
-        const selectedSet = new Set(studentAnswer.selectedAnswers || []);
 
-        // All correct answers must be selected AND no extra answers
         isCorrect =
           correctSet.size === selectedSet.size &&
-          Array.from(correctSet).every((ans) => selectedSet.has(ans));
-      } else if (q.type !== "THEORETICAL" && q.type !== "PASSAGE") {
-        // ✅ For MCQ/MATH/AR: check single answer
-        isCorrect = studentAnswer.selectedAnswer === q.correctAnswer;
+          [...correctSet].every(ans => selectedSet.has(ans));
+      } else {
+        isCorrect =
+          studentAnswer.selectedAnswer === q.correctAnswer;
       }
 
       if (isCorrect) {
-        score += q.marks;
+        score += Number(q.marks) || 0;
         correctCount++;
       } else {
         wrongCount++;
-        if (q.negativeMarks) {
-          score -= q.negativeMarks;
-        }
+        score -= Number(q.negativeMarks) || 0;
       }
     });
 
-    // ✅ ROUND OFF HERE
-    score = Number(score.toFixed(2));  // 2 decimal precision
+    score = Number(score.toFixed(2));
 
     attempt.answers = answers;
     attempt.score = score;
     attempt.correctCount = correctCount;
     attempt.wrongCount = wrongCount;
     attempt.attemptedCount = attemptedCount;
-    attempt.submittedAt = now;
+    attempt.submittedAt = new Date();
 
     await attempt.save();
 
-    res.json({
-      message: "Test submitted",
-      score,
-    });
+    res.json({ message: "Test submitted", score });
 
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-
-
-
-
+/* =====================================================
+   5️⃣ GET RESULT
+===================================================== */
 export const getResult = async (req, res) => {
   try {
     const { attemptId } = req.params;
@@ -309,17 +286,15 @@ export const getResult = async (req, res) => {
       return res.status(404).json({ message: "Not found" });
 
     res.json(attempt);
+
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-
-export const getTestById = async (req, res) => {
-  const test = await Test.findById(req.params.id);
-  res.json(test);
-};
-
+/* =====================================================
+   6️⃣ HEARTBEAT
+===================================================== */
 export const heartbeat = async (req, res) => {
   const { attemptId } = req.body;
 
@@ -330,19 +305,28 @@ export const heartbeat = async (req, res) => {
   res.json({ status: "alive" });
 };
 
-
+/* =====================================================
+   7️⃣ VIOLATION
+===================================================== */
 export const reportViolation = async (req, res) => {
   const { attemptId, type } = req.body;
 
   const attempt = await Attempt.findById(attemptId);
-
   if (!attempt || attempt.status !== "IN_PROGRESS")
     return res.json();
 
-  if (type === "TAB") attempt.tabSwitchCount += 1;
-  if (type === "FULLSCREEN") attempt.fullscreenExitCount += 1;
+  attempt.tabSwitchCount =
+    (attempt.tabSwitchCount || 0) +
+    (type === "TAB" ? 1 : 0);
 
-  if (attempt.tabSwitchCount >= 3) {
+  attempt.fullscreenExitCount =
+    (attempt.fullscreenExitCount || 0) +
+    (type === "FULLSCREEN" ? 1 : 0);
+
+  if (
+    attempt.tabSwitchCount >= 3 ||
+    attempt.fullscreenExitCount >= 3
+  ) {
     attempt.status = "TERMINATED";
   }
 
@@ -351,20 +335,18 @@ export const reportViolation = async (req, res) => {
   res.json({ message: "Violation recorded" });
 };
 
-
+/* =====================================================
+   8️⃣ PUBLIC TEST DETAILS
+===================================================== */
 export const getPublicTestDetails = async (req, res) => {
   try {
     const { testId } = req.params;
 
-    const test = await Test.findById(testId).select(
-      "name duration totalMarks passingMarks"
-    );
+    const test = await Test.findById(testId)
+      .select("name duration totalMarks passingMarks");
 
-    if (!test) {
-      return res.status(404).json({
-        message: "Test not found",
-      });
-    }
+    if (!test)
+      return res.status(404).json({ message: "Test not found" });
 
     res.json(test);
 
@@ -373,7 +355,9 @@ export const getPublicTestDetails = async (req, res) => {
   }
 };
 
-
+/* =====================================================
+   9️⃣ RECENT PERFORMANCE
+===================================================== */
 export const getRecentPerformance = async (req, res) => {
   try {
     const studentId = req.user._id;
@@ -391,16 +375,17 @@ export const getRecentPerformance = async (req, res) => {
         }
       });
 
-    if (!attempt) {
-      return res.json(null);
-    }
+    if (!attempt) return res.json(null);
 
     const timeSpent =
-      (new Date(attempt.submittedAt) - new Date(attempt.startedAt)) / 60000;
+      (new Date(attempt.submittedAt) -
+        new Date(attempt.startedAt)) / 60000;
 
     res.json({
-      batchName: attempt.testId?.testSeriesId?.title || "N/A",
-      testName: attempt.testId?.name || "N/A",
+      batchName:
+        attempt.testId?.testSeriesId?.title || "N/A",
+      testName:
+        attempt.testId?.name || "N/A",
       score: attempt.score,
       timeSpent: Math.round(timeSpent),
       attempted: attempt.attemptedCount,

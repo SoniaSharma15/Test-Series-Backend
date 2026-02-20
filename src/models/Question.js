@@ -19,6 +19,17 @@ const questionSchema = new mongoose.Schema(
       default: "MCQ",
     },
 
+     // ✅ NEW PROPER PASSAGE FIELD
+    passage: {
+      english: { type: String, default: "" },
+      hindi: { type: String, default: "" },
+    },
+// ✅ ADD THIS
+passageGroupId: {
+  type: String,
+  default: null,
+},
+    
     questionText: {
       english: { type: String },
       hindi: { type: String },
