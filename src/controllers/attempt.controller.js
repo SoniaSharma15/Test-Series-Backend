@@ -2,7 +2,9 @@ import Attempt from "../models/Attempt.js";
 import Question from "../models/Question.js";
 import Test from "../models/Test.js";
 
-/* 1️⃣ Start Attempt */
+/* =====================================================
+   1️⃣ START ATTEMPT
+===================================================== */
 export const startAttempt = async (req, res) => {
   try {
     const { testId } = req.body;
@@ -34,9 +36,13 @@ export const startAttempt = async (req, res) => {
       testId,
       attemptNumber,
       duration: test.duration,
+      startedAt: new Date(),
       ipAddress: req.ip,
       userAgent: req.headers["user-agent"],
       lastHeartbeat: new Date(),
+      status: "IN_PROGRESS",
+      tabSwitchCount: 0,
+      fullscreenExitCount: 0,
     });
 
     res.status(201).json({
@@ -49,8 +55,9 @@ export const startAttempt = async (req, res) => {
   }
 };
 
-
-
+/* =====================================================
+   2️⃣ GET PERFORMANCE
+===================================================== */
 export const getPerformance = async (req, res) => {
   try {
     const studentId = req.user._id;
@@ -99,9 +106,7 @@ export const getPerformance = async (req, res) => {
         : 0;
 
     const passFailRatio =
-      totalAttempts > 0
-        ? `${passCount}/${totalAttempts}`
-        : "0/0";
+      totalAttempts > 0 ? `${passCount}/${totalAttempts}` : "0/0";
 
     // ✅ Sort by latest
     const sortedAttempts = attempts.sort(
@@ -134,6 +139,7 @@ export const getPerformance = async (req, res) => {
       latestBatchName,
       latestTestName,
     });
+
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -487,15 +493,11 @@ export const getPublicTestDetails = async (req, res) => {
   try {
     const { testId } = req.params;
 
-    const test = await Test.findById(testId).select(
-      "name duration totalMarks passingMarks"
-    );
+    const test = await Test.findById(testId)
+      .select("name duration totalMarks passingMarks");
 
-    if (!test) {
-      return res.status(404).json({
-        message: "Test not found",
-      });
-    }
+    if (!test)
+      return res.status(404).json({ message: "Test not found" });
 
     res.json(test);
 
@@ -504,7 +506,9 @@ export const getPublicTestDetails = async (req, res) => {
   }
 };
 
-
+/* =====================================================
+   9️⃣ RECENT PERFORMANCE
+===================================================== */
 export const getRecentPerformance = async (req, res) => {
   try {
     const studentId = req.user._id;
@@ -522,9 +526,7 @@ export const getRecentPerformance = async (req, res) => {
         }
       });
 
-    if (!attempt) {
-      return res.json(null);
-    }
+    if (!attempt) return res.json(null);
 
     // ✅ Calculate percentage safely
     const percentage =

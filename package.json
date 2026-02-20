@@ -24,7 +24,6 @@
     "multer": "^2.0.2",
     "nodemailer": "^8.0.1",
     "pdfkit": "^0.17.2",
-    "playwright": "^1.58.2",
     "razorpay": "^2.9.6"
   },
   "devDependencies": {

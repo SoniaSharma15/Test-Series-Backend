@@ -45,29 +45,31 @@ const validateQuestion = (data) => {
       validateOptions(q.options);
       validateCorrectAnswers(q.correctAnswers, q.options);
 
-      if (q.type === "ASSERTION_REASON") {
-        if (!q.assertion?.english || !q.reason?.english) {
-          throw new Error("Assertion and Reason required");
-        }
-      } else {
-        if (!q.questionText?.english) {
-          throw new Error("Question text required");
-        }
-      }
+      // if (q.type === "ASSERTION_REASON") {
+      //   if (!q.assertion?.english || !q.reason?.english  !q.assertion?.hindi || !q.reason?.hindi) {
+      //     throw new Error("Assertion and Reason required");
+      //   }
+      // }
+      //  else {
+      //   if (!q.questionText?.english) {
+      //     throw new Error("Question text required");
+      //   }
+      // }
     });
   } else {
     validateOptions(data.options);
     validateCorrectAnswers(data.correctAnswers, data.options);
 
-    if (data.type === "ASSERTION_REASON") {
-      if (!data.assertion?.english || !data.reason?.english) {
-        throw new Error("Assertion and Reason required");
-      }
-    } else {
-      if (!data.questionText?.english) {
-        throw new Error("Question text required");
-      }
-    }
+    // if (data.type === "ASSERTION_REASON") {
+    //   if (!data.assertion?.english || !data.reason?.english) {
+    //     throw new Error("Assertion and Reason required");
+    //   }
+    // }
+    //  else {
+    //   if (!data.questionText?.english) {
+    //     throw new Error("Question text required");
+    //   }
+    // }
   }
 };
 
@@ -140,9 +142,9 @@ export const createQuestion = async (req, res) => {
     if (data.type === "PASSAGE") {
       console.log("Validating PASSAGE...");
 
-      if (!data.passageText?.english) {
-        throw new Error("Passage text required");
-      }
+      // if (!data.passageText?.english) {
+      //   throw new Error("Passage text required");
+      // }
 
       if (!Array.isArray(data.passageQuestions) || !data.passageQuestions.length) {
         throw new Error("Passage must contain questions");
@@ -154,15 +156,16 @@ export const createQuestion = async (req, res) => {
         validateOptions(q.options);
         validateCorrectAnswers(q.correctAnswers, q.options);
 
-        if (q.type === "ASSERTION_REASON") {
-          if (!q.assertion?.english || !q.reason?.english) {
-            throw new Error(`Assertion/Reason missing in sub question ${index}`);
-          }
-        } else {
-          if (!q.questionText?.english) {
-            throw new Error(`Question text missing in sub question ${index}`);
-          }
-        }
+        // if (q.type === "ASSERTION_REASON") {
+        //   if (!q.assertion?.english || !q.reason?.english) {
+        //     throw new Error(`Assertion/Reason missing in sub question ${index}`);
+        //   }
+        // } 
+        // else {
+        //   if (!q.questionText?.english) {
+        //     throw new Error(`Question text missing in sub question ${index}`);
+        //   }
+        // }
       });
 
     } else {
@@ -171,15 +174,16 @@ export const createQuestion = async (req, res) => {
       validateOptions(data.options);
       validateCorrectAnswers(data.correctAnswers, data.options);
 
-      if (data.type === "ASSERTION_REASON") {
-        if (!data.assertion?.english || !data.reason?.english) {
-          throw new Error("Assertion and Reason required");
-        }
-      } else {
-        if (!data.questionText?.english) {
-          throw new Error("Question text required");
-        }
-      }
+      // if (data.type === "ASSERTION_REASON") {
+      //   if (!data.assertion?.english || !data.reason?.english) {
+      //     throw new Error("Assertion and Reason required");
+      //   }
+      // } 
+      // else {
+      //   if (!data.questionText?.english) {
+      //     throw new Error("Question text required");
+      //   }
+      // }
     }
 
     console.log("Validation passed ✔");
