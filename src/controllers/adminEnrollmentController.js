@@ -2,27 +2,23 @@ import Enrollment from "../models/Enrollment.js";
 import TestSeries from "../models/TestSeries.js";
 import User from "../models/User.js";
 
-
 export const manualEnroll = async (req, res) => {
   try {
     const { studentId, testSeriesId } = req.body;
 
     const existing = await Enrollment.findOne({ studentId, testSeriesId });
-
-    if (existing)
-      return res.status(400).json({ message: "Already enrolled" });
+    if (existing) return res.status(400).json({ message: "Already enrolled" });
 
     const testSeries = await TestSeries.findById(testSeriesId);
+    if (!testSeries) return res.status(404).json({ message: "Test series not found" });
 
+    // ✅ NO expiryDate here
     const enrollment = await Enrollment.create({
       studentId,
       testSeriesId,
       amount: 0,
-      source: "admin",        // 🔥 IMPORTANT
+      source: "admin",
       status: "active",
-      expiryDate: new Date(
-        Date.now() + testSeries.duration * 24 * 60 * 60 * 1000
-      ),
     });
 
     res.json(enrollment);
@@ -30,7 +26,6 @@ export const manualEnroll = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-
 
 export const getAllEnrollments = async (req, res) => {
   try {
@@ -41,7 +36,7 @@ export const getAllEnrollments = async (req, res) => {
       search = "",
       startDate,
       endDate,
-      expired,
+      // ✅ ignore expired param (no expired system)
     } = req.query;
 
     const pageNum = Math.max(1, Number(page) || 1);
@@ -59,10 +54,6 @@ export const getAllEnrollments = async (req, res) => {
       };
     }
 
-    const now = new Date();
-    const expiredBool =
-      String(expired).toLowerCase() === "true" || String(expired) === "1";
-
     const searchStr = String(search || "").trim();
     const hasSearch = searchStr.length > 0;
     const regex = hasSearch
@@ -75,7 +66,7 @@ export const getAllEnrollments = async (req, res) => {
       // join student
       {
         $lookup: {
-          from: User.collection.name, // "users"
+          from: User.collection.name,
           localField: "studentId",
           foreignField: "_id",
           as: "student",
@@ -86,7 +77,7 @@ export const getAllEnrollments = async (req, res) => {
       // join test series
       {
         $lookup: {
-          from: TestSeries.collection.name, // "testseries"
+          from: TestSeries.collection.name,
           localField: "testSeriesId",
           foreignField: "_id",
           as: "series",
@@ -94,21 +85,9 @@ export const getAllEnrollments = async (req, res) => {
       },
       { $unwind: { path: "$series", preserveNullAndEmptyArrays: true } },
 
-      // ✅ IMPORTANT: expiryDate fallback compute
+      // ✅ only purchaseDate fallback (no expiryDate addFields)
       {
         $addFields: {
-          expiryDate: {
-            $ifNull: [
-              "$expiryDate",
-              {
-                $dateAdd: {
-                  startDate: "$createdAt",
-                  unit: "day",
-                  amount: { $ifNull: ["$series.duration", 30] },
-                },
-              },
-            ],
-          },
           purchaseDate: { $ifNull: ["$purchaseDate", "$createdAt"] },
         },
       },
@@ -127,11 +106,6 @@ export const getAllEnrollments = async (req, res) => {
       });
     }
 
-    // ✅ expired filter AFTER expiryDate is computed
-    if (expiredBool) {
-      pipeline.push({ $match: { expiryDate: { $lt: now } } });
-    }
-
     pipeline.push({
       $facet: {
         enrollments: [
@@ -147,7 +121,6 @@ export const getAllEnrollments = async (req, res) => {
               paymentId: 1,
               accessGranted: 1,
               purchaseDate: 1,
-              expiryDate: 1,
               createdAt: 1,
 
               studentId: {
@@ -174,10 +147,6 @@ export const getAllEnrollments = async (req, res) => {
           { $group: { _id: null, total: { $sum: "$amount" } } },
         ],
 
-        expiredCount: [
-          { $match: { expiryDate: { $lt: now } } },
-          { $count: "count" },
-        ],
       },
     });
 
@@ -191,7 +160,6 @@ export const getAllEnrollments = async (req, res) => {
     const statsBySource = Array.isArray(first.statsBySource) ? first.statsBySource : [];
 
     const totalRevenue = first.revenue?.[0]?.total || 0;
-    const expiredCount = first.expiredCount?.[0]?.count || 0;
 
     return res.json({
       enrollments,
@@ -201,7 +169,7 @@ export const getAllEnrollments = async (req, res) => {
       stats: {
         byStatus: statsByStatus,
         bySource: statsBySource,
-        expiredCount,
+        // ✅ removed expiredCount from response too
       },
       totalRevenue,
     });
@@ -210,43 +178,6 @@ export const getAllEnrollments = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-
-
-/**
- * PATCH /enrollments/:id/renew
- * Body (optional): { days: number }
- * - If days not provided: uses testSeries.duration (days)
- */
-export const renewEnrollment = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const daysFromBody = Number(req.body?.days || 0);
-
-    const enrollment = await Enrollment.findById(id).populate("testSeriesId");
-    if (!enrollment) return res.status(404).json({ message: "Enrollment not found" });
-
-    const series = enrollment.testSeriesId;
-    const durationDays = daysFromBody > 0 ? daysFromBody : Number(series?.duration || 30);
-
-    const now = new Date();
-    const newExpiry = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
-
-    enrollment.status = "active";
-    enrollment.accessGranted = true;
-    enrollment.expiryDate = newExpiry;
-
-    await enrollment.save();
-
-    return res.json({
-      message: "Enrollment renewed",
-      enrollment,
-    });
-  } catch (error) {
-    console.error("renewEnrollment error:", error);
-    res.status(500).json({ message: error.message });
-  }
-};
-
 
 
 // 3️⃣ Update status
@@ -262,5 +193,3 @@ export const updateEnrollmentStatus = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-
-

@@ -3,7 +3,7 @@
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 import dotenv from "dotenv";
-import User from "./models/User.js";
+import User from "../models/User";
 
 dotenv.config();
 
@@ -17,7 +17,7 @@ const seedAdmin = async () => {
     console.log("✅ MongoDB Connected");
 
     const adminEmail = "admin@gmail.com";
-    const adminPassword = "Admin@123"; // change if needed
+    const adminPassword = "123456"; // change if needed
 
     // ✅ Check if admin already exists
     const existingAdmin = await User.findOne({ email: adminEmail });

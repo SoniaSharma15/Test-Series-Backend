@@ -7,53 +7,65 @@ import Payment from "../models/Payment.js";
 
 export const getAdminDashboard = async (req, res) => {
   try {
-    // Total Students
-    const totalStudents = await User.countDocuments({
-      role: "student",
-    });
-
-    // Total Test Series
+    const totalStudents = await User.countDocuments({ role: "student" });
     const totalTestSeries = await TestSeries.countDocuments();
-
-    // Total Tests
     const totalTests = await Test.countDocuments();
 
-    // Total Revenue
-    const revenue = await Payment.aggregate([
+    // ✅ TOTAL REVENUE
+    const revenueAgg = await Payment.aggregate([
+      { $group: { _id: null, total: { $sum: "$amount" } } },
+    ]);
+    const totalRevenue = revenueAgg?.[0]?.total || 0;
+
+    // ✅ DAY-WISE REVENUE (last 7 days – you can change to 30)
+    const fromDate = new Date();
+    fromDate.setDate(fromDate.getDate() - 6);
+    fromDate.setHours(0, 0, 0, 0);
+
+    const dailyRevenue = await Payment.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: fromDate },
+        },
+      },
       {
         $group: {
-          _id: null,
+          _id: {
+            $dateToString: {
+              format: "%Y-%m-%d",
+              date: "$createdAt",
+              timezone: "Asia/Kolkata",
+            },
+          },
           total: { $sum: "$amount" },
         },
       },
+      { $sort: { _id: 1 } },
     ]);
 
-    const totalRevenue =
-      revenue.length > 0 ? revenue[0].total : 0;
-
-    // Recent Enrollments (last 5)
     const recentEnrollments = await Enrollment.find()
       .sort({ createdAt: -1 })
       .limit(5)
       .populate("studentId", "name email")
       .populate("testSeriesId", "title");
 
-    // Recent Attempts (last 5)
     const recentAttempts = await Attempt.find()
       .sort({ submittedAt: -1 })
       .limit(5)
       .populate("studentId", "name email")
       .populate("testId", "name");
 
-    res.json({
+    return res.json({
       totalStudents,
       totalTestSeries,
       totalTests,
       totalRevenue,
+      dailyRevenue, // ✅ NEW FIELD
       recentEnrollments,
       recentAttempts,
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: error.message });
   }
 };
+

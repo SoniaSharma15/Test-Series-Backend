@@ -1,5 +1,64 @@
 import mongoose from "mongoose";
 
+/* =====================================================
+   ANSWER SNAPSHOT SCHEMA
+===================================================== */
+
+const answerSchema = new mongoose.Schema({
+  questionId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Question",
+    required: true,
+  },
+
+  // For PASSAGE → which sub question
+  childIndex: {
+    type: Number,
+    default: null,
+  },
+
+  questionType: {
+    type: String,
+    enum: ["MCQ", "MSQ", "ASSERTION_REASON", "MATH"],
+    required: true,
+  },
+
+  selectedAnswers: {
+    type: [String], // Always array (["A"] for MCQ)
+    default: [],
+  },
+
+  correctAnswersSnapshot: {
+    type: [String],
+    required: true,
+  },
+
+  marks: {
+    type: Number,
+    required: true,
+  },
+
+  negativeMarks: {
+    type: Number,
+    default: 0,
+  },
+
+  isCorrect: {
+    type: Boolean,
+    default: false,
+  },
+
+  marksAwarded: {
+    type: Number,
+    default: 0,
+  },
+});
+
+
+/* =====================================================
+   ATTEMPT SCHEMA
+===================================================== */
+
 const attemptSchema = new mongoose.Schema(
   {
     studentId: {
@@ -22,27 +81,39 @@ const attemptSchema = new mongoose.Schema(
     },
 
     duration: {
-      type: Number, // lock duration at start (minutes)
+      type: Number, // locked at start (minutes)
       required: true,
     },
 
-    answers: [
-      {
-        questionId: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "Question",
-        },
-        selectedAnswer: String, // ✅ MCQ, MATH, AR
-        selectedAnswers: [String], // ✅ MSQ (multiple)
-      },
-    ],
+    status: {
+      type: String,
+      enum: [
+        "IN_PROGRESS",
+        "COMPLETED",
+        "AUTO_SUBMITTED",
+        "TERMINATED",
+      ],
+      default: "IN_PROGRESS",
+      index: true,
+    },
 
-    score: {
+    startedAt: {
+      type: Date,
+      default: Date.now,
+    },
+
+    submittedAt: Date,
+
+    totalMarks: {
       type: Number,
       default: 0,
     },
 
-    // ✅ ADDED FIELDS (for performance analytics)
+    obtainedMarks: {
+      type: Number,
+      default: 0,
+    },
+
     correctCount: {
       type: Number,
       default: 0,
@@ -58,24 +129,16 @@ const attemptSchema = new mongoose.Schema(
       default: 0,
     },
 
-    startedAt: {
-      type: Date,
-      default: Date.now,
+    unattemptedCount: {
+      type: Number,
+      default: 0,
     },
 
-    submittedAt: Date,
+    answers: [answerSchema],
 
-    status: {
-      type: String,
-      enum: [
-        "IN_PROGRESS",
-        "COMPLETED",
-        "AUTO_SUBMITTED",
-        "TERMINATED"
-      ],
-      default: "IN_PROGRESS",
-      index: true,
-    },
+    /* ===============================
+       Anti-Cheat / Tracking Fields
+    ================================ */
 
     tabSwitchCount: {
       type: Number,
@@ -89,15 +152,22 @@ const attemptSchema = new mongoose.Schema(
 
     ipAddress: String,
     userAgent: String,
-
     lastHeartbeat: Date,
   },
   { timestamps: true }
 );
 
-/* Prevent duplicate active attempt */
+
+/* =====================================================
+   INDEXES
+===================================================== */
+
+// Prevent duplicate active attempt
 attemptSchema.index(
   { studentId: 1, testId: 1, status: 1 }
 );
+
+// Fast result lookup
+attemptSchema.index({ studentId: 1, testId: 1 });
 
 export default mongoose.model("Attempt", attemptSchema);

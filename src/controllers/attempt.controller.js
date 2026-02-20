@@ -14,23 +14,27 @@ export const startAttempt = async (req, res) => {
     if (!test)
       return res.status(404).json({ message: "Test not found" });
 
-    const existingAttempt = await Attempt.findOne({
+    // Prevent multiple active attempts
+    const existing = await Attempt.findOne({
       studentId,
       testId,
-      status: { $in: ["IN_PROGRESS", "COMPLETED", "AUTO_SUBMITTED"] },
+      status: { $in: ["IN_PROGRESS"] },
     });
 
-    if (existingAttempt) {
-      return res.status(400).json({
-        message: "You have already attempted this test",
-        alreadyAttempted: true,
+    if (existing) {
+      return res.status(200).json({
+        attemptId: existing._id,
+        resumed: true,
       });
     }
 
-    const newAttempt = await Attempt.create({
+    const attemptNumber =
+      (await Attempt.countDocuments({ studentId, testId })) + 1;
+
+    const attempt = await Attempt.create({
       studentId,
       testId,
-      attemptNumber: 1,
+      attemptNumber,
       duration: test.duration,
       startedAt: new Date(),
       ipAddress: req.ip,
@@ -41,7 +45,10 @@ export const startAttempt = async (req, res) => {
       fullscreenExitCount: 0,
     });
 
-    res.status(201).json({ attemptId: newAttempt._id });
+    res.status(201).json({
+      attemptId: attempt._id,
+      resumed: false,
+    });
 
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -55,54 +62,73 @@ export const getPerformance = async (req, res) => {
   try {
     const studentId = req.user._id;
 
-    const attempts = await Attempt.find({ studentId })
-      .populate("testId");
+    // ✅ Only completed attempts
+    const attempts = await Attempt.find({
+      studentId,
+      status: { $in: ["COMPLETED", "AUTO_SUBMITTED"] }
+    }).populate({
+      path: "testId",
+      populate: {
+        path: "testSeriesId",
+        select: "title"
+      }
+    });
 
     const totalAttempts = attempts.length;
 
-    let averageScore = 0;
+    let totalPercentage = 0;
     let highestScore = 0;
     let passCount = 0;
 
     for (const attempt of attempts) {
-      const score = attempt.score || 0;
+      const percentage =
+        attempt.totalMarks > 0
+          ? (attempt.obtainedMarks / attempt.totalMarks) * 100
+          : 0;
 
-      averageScore += score;
-      if (score > highestScore) highestScore = score;
+      totalPercentage += percentage;
+
+      if (percentage > highestScore) {
+        highestScore = percentage;
+      }
 
       if (
         attempt.testId &&
-        score >= attempt.testId.passingMarks
+        percentage >= attempt.testId.passingMarks
       ) {
         passCount++;
       }
     }
 
-    averageScore =
+    const averageScore =
       totalAttempts > 0
-        ? Number((averageScore / totalAttempts).toFixed(2))
+        ? totalPercentage / totalAttempts
         : 0;
 
     const passFailRatio =
       totalAttempts > 0 ? `${passCount}/${totalAttempts}` : "0/0";
 
-    const recentResults = attempts
-      .filter(a => a.submittedAt)
-      .sort((a, b) => b.submittedAt - a.submittedAt)
-      .slice(0, 5);
+    // ✅ Sort by latest
+    const sortedAttempts = attempts.sort(
+      (a, b) => new Date(b.submittedAt) - new Date(a.submittedAt)
+    );
 
-    const latestAttempt = await Attempt.findOne({
-      studentId,
-      status: { $in: ["COMPLETED", "AUTO_SUBMITTED"] }
-    })
-      .sort({ submittedAt: -1 })
-      .populate({
-        path: "testId",
-        populate: {
-          path: "testSeriesId",
-          select: "title"
-        }
-      });
+    const recentResults = sortedAttempts
+      .slice(0, 5)
+      .map((attempt) => ({
+        score:
+          attempt.totalMarks > 0
+            ? (attempt.obtainedMarks / attempt.totalMarks) * 100
+            : 0,
+      }));
+
+    const latestAttempt = sortedAttempts[0];
+
+    const latestBatchName =
+      latestAttempt?.testId?.testSeriesId?.title || "N/A";
+
+    const latestTestName =
+      latestAttempt?.testId?.name || "N/A";
 
     res.json({
       totalAttempts,
@@ -110,10 +136,8 @@ export const getPerformance = async (req, res) => {
       highestScore,
       passFailRatio,
       recentResults,
-      latestBatchName:
-        latestAttempt?.testId?.testSeriesId?.title || "N/A",
-      latestTestName:
-        latestAttempt?.testId?.name || "N/A"
+      latestBatchName,
+      latestTestName,
     });
 
   } catch (error) {
@@ -121,9 +145,7 @@ export const getPerformance = async (req, res) => {
   }
 };
 
-/* =====================================================
-   3️⃣ GET EXAM DATA
-===================================================== */
+
 export const getExamData = async (req, res) => {
   try {
     const { attemptId } = req.params;
@@ -132,33 +154,20 @@ export const getExamData = async (req, res) => {
       .populate("testId");
 
     if (!attempt)
-      return res.status(404).json({ status: "NOT_FOUND" });
+      return res.status(404).json({ message: "Attempt not found" });
 
     if (attempt.studentId.toString() !== req.user._id.toString())
-      return res.status(403).json({ status: "UNAUTHORIZED" });
+      return res.status(403).json({ message: "Unauthorized" });
 
-    if (["COMPLETED", "AUTO_SUBMITTED"].includes(attempt.status))
-      return res.status(409).json({ status: "COMPLETED" });
-
-    if (attempt.status === "TERMINATED")
-      return res.status(403).json({ status: "TERMINATED" });
-
-    const elapsed =
-      (Date.now() - new Date(attempt.startedAt)) / 1000;
-
-    if (elapsed > attempt.duration * 60) {
-      attempt.status = "AUTO_SUBMITTED";
-      attempt.submittedAt = new Date();
-      await attempt.save();
-      return res.status(409).json({ status: "TIME_EXPIRED" });
-    }
+    if (attempt.status !== "IN_PROGRESS")
+      return res.status(409).json({ message: "Already submitted" });
 
     const questions = await Question.find({
-      testId: attempt.testId._id
-    }).sort({ createdAt: 1 });
+      testId: attempt.testId._id,
+      isActive: true,
+    }).lean();
 
     res.json({
-      status: "ACTIVE",
       test: attempt.testId,
       questions,
       startedAt: attempt.startedAt,
@@ -166,114 +175,163 @@ export const getExamData = async (req, res) => {
     });
 
   } catch (error) {
-    res.status(500).json({
-      status: "SERVER_ERROR",
-      message: error.message,
-    });
+    res.status(500).json({ message: error.message });
   }
 };
 
-/* =====================================================
-   4️⃣ SUBMIT ATTEMPT
-===================================================== */
+
+
 export const submitAttempt = async (req, res) => {
   try {
-    const { attemptId } = req.body;
-    const answers = Array.isArray(req.body.answers)
-      ? req.body.answers
-      : [];
+    const { attemptId, answers = [] } = req.body;
 
     const attempt = await Attempt.findById(attemptId);
     if (!attempt)
       return res.status(404).json({ message: "Attempt not found" });
 
+    if (attempt.studentId.toString() !== req.user._id.toString())
+      return res.status(403).json({ message: "Unauthorized" });
+
     if (attempt.status !== "IN_PROGRESS")
       return res.status(400).json({ message: "Already submitted" });
 
-    const elapsed =
-      (Date.now() - new Date(attempt.startedAt)) / 1000;
-
-    attempt.status =
-      elapsed > attempt.duration * 60
-        ? "AUTO_SUBMITTED"
-        : "COMPLETED";
-
     const questions = await Question.find({
       testId: attempt.testId,
-    });
+      isActive: true,
+    }).lean();
 
-    let score = 0;
+    /* =====================================================
+       FLATTEN QUESTIONS (Handle PASSAGE)
+    ===================================================== */
+
+    const flattened = [];
+
+    for (const q of questions) {
+      if (q.type === "PASSAGE") {
+        q.passageQuestions.forEach((child, index) => {
+          flattened.push({
+            parentId: q._id,
+            childIndex: index,
+            ...child,
+          });
+        });
+      } else {
+        flattened.push({
+          parentId: q._id,
+          childIndex: null,
+          ...q,
+        });
+      }
+    }
+
+    /* =====================================================
+       MAP STUDENT ANSWERS
+    ===================================================== */
+
+    const answerMap = new Map();
+
+    for (const ans of answers) {
+      const key = `${ans.questionId}_${ans.childIndex ?? "main"}`;
+
+      let selected = [];
+
+      if (Array.isArray(ans.selectedAnswers)) {
+        selected = ans.selectedAnswers;
+      } else if (ans.selectedAnswer) {
+        selected = [ans.selectedAnswer];
+      }
+
+      answerMap.set(key, selected);
+    }
+
+
+    /* =====================================================
+       SCORING
+    ===================================================== */
+
+    let totalMarks = 0;
+    let obtainedMarks = 0;
     let correctCount = 0;
     let wrongCount = 0;
     let attemptedCount = 0;
 
-    questions.forEach((q) => {
-      const studentAnswer = answers.find(
-        (a) => String(a.questionId) === String(q._id)
-      );
+    const evaluatedAnswers = [];
 
-      if (!studentAnswer) return;
+    for (const q of flattened) {
+      const key = `${q.parentId}_${q.childIndex ?? "main"}`;
+      const selected = answerMap.get(key) || [];
+      const correct = q.correctAnswers || [];
 
-      let hasAnswer = false;
-
-      if (q.type === "MSQ") {
-        hasAnswer =
-          Array.isArray(studentAnswer.selectedAnswers) &&
-          studentAnswer.selectedAnswers.length > 0;
-      } else {
-        hasAnswer = !!studentAnswer.selectedAnswer;
-      }
-
-      if (!hasAnswer) return;
-
-      attemptedCount++;
+      totalMarks += q.marks;
 
       let isCorrect = false;
+      let marksAwarded = 0;
 
-      if (q.type === "MSQ") {
-        const correctSet = new Set(q.correctAnswers || []);
-        const selectedSet = new Set(
-          studentAnswer.selectedAnswers || []
-        );
+      if (selected.length > 0) {
+        attemptedCount++;
 
-        isCorrect =
-          correctSet.size === selectedSet.size &&
-          [...correctSet].every(ans => selectedSet.has(ans));
-      } else {
-        isCorrect =
-          studentAnswer.selectedAnswer === q.correctAnswer;
+        const isExactMatch =
+          selected.length === correct.length &&
+          selected.every((a) => correct.includes(a));
+
+        if (isExactMatch) {
+          isCorrect = true;
+          marksAwarded = q.marks;
+          correctCount++;
+        } else {
+          marksAwarded = -Math.abs(q.negativeMarks || 0);
+          wrongCount++;
+        }
+
+        obtainedMarks += marksAwarded;
       }
 
-      if (isCorrect) {
-        score += Number(q.marks) || 0;
-        correctCount++;
-      } else {
-        wrongCount++;
-        score -= Number(q.negativeMarks) || 0;
-      }
-    });
+      evaluatedAnswers.push({
+        questionId: q.parentId,
+        childIndex: q.childIndex,
+        questionType: q.type,
+        selectedAnswers: selected,
+        correctAnswersSnapshot: correct,
+        marks: q.marks,
+        negativeMarks: q.negativeMarks,
+        isCorrect,
+        marksAwarded,
+      });
+    }
 
-    score = Number(score.toFixed(2));
+    /* =====================================================
+       FINALIZE ATTEMPT
+    ===================================================== */
 
-    attempt.answers = answers;
-    attempt.score = score;
+    attempt.answers = evaluatedAnswers;
+    attempt.totalMarks = totalMarks;
+    attempt.obtainedMarks = Number(obtainedMarks.toFixed(2));
     attempt.correctCount = correctCount;
     attempt.wrongCount = wrongCount;
     attempt.attemptedCount = attemptedCount;
+    attempt.unattemptedCount = flattened.length - attemptedCount;
     attempt.submittedAt = new Date();
+    attempt.status = "COMPLETED";
 
     await attempt.save();
 
-    res.json({ message: "Test submitted", score });
+    res.json({
+      message: "Test submitted successfully",
+      totalMarks,
+      obtainedMarks: attempt.obtainedMarks,
+      correctCount,
+      wrongCount,
+      attemptedCount,
+      unattemptedCount: attempt.unattemptedCount,
+    });
 
   } catch (error) {
+    console.error("Submit Error:", error);
     res.status(500).json({ message: error.message });
   }
 };
 
-/* =====================================================
-   5️⃣ GET RESULT
-===================================================== */
+
 export const getResult = async (req, res) => {
   try {
     const { attemptId } = req.params;
@@ -285,16 +343,45 @@ export const getResult = async (req, res) => {
     if (!attempt)
       return res.status(404).json({ message: "Not found" });
 
-    res.json(attempt);
+    /* ==========================================
+       TRANSFORM ANSWERS (HANDLE PASSAGE PROPERLY)
+    ========================================== */
+
+    const transformedAnswers = attempt.answers.map((ans) => {
+      const parent = ans.questionId;
+
+      let questionData = null;
+
+      // 🔹 If Passage → pick child question
+      if (parent.type === "PASSAGE" && ans.childIndex !== null) {
+        questionData = parent.passageQuestions[ans.childIndex];
+      } else {
+        questionData = parent;
+      }
+
+      return {
+        ...ans.toObject(),
+        questionData, // 🔥 send proper question
+      };
+    });
+
+    res.json({
+      ...attempt.toObject(),
+      answers: transformedAnswers,
+    });
 
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-/* =====================================================
-   6️⃣ HEARTBEAT
-===================================================== */
+
+
+export const getTestById = async (req, res) => {
+  const test = await Test.findById(req.params.id);
+  res.json(test);
+};
+
 export const heartbeat = async (req, res) => {
   const { attemptId } = req.body;
 
@@ -377,23 +464,34 @@ export const getRecentPerformance = async (req, res) => {
 
     if (!attempt) return res.json(null);
 
-    const timeSpent =
-      (new Date(attempt.submittedAt) -
-        new Date(attempt.startedAt)) / 60000;
+    // ✅ Calculate percentage safely
+    const percentage =
+      attempt.totalMarks > 0
+        ? (attempt.obtainedMarks / attempt.totalMarks) * 100
+        : 0;
+
+    // ✅ Calculate time safely
+    let timeSpent = 0;
+    if (attempt.startedAt && attempt.submittedAt) {
+      timeSpent =
+        (new Date(attempt.submittedAt) - new Date(attempt.startedAt)) /
+        60000;
+    }
 
     res.json({
-      batchName:
-        attempt.testId?.testSeriesId?.title || "N/A",
-      testName:
-        attempt.testId?.name || "N/A",
-      score: attempt.score,
-      timeSpent: Math.round(timeSpent),
-      attempted: attempt.attemptedCount,
-      correct: attempt.correctCount,
-      wrong: attempt.wrongCount,
+      batchName: attempt.testId?.testSeriesId?.title || "N/A",
+      testName: attempt.testId?.name || "N/A",
+      score: Number(percentage.toFixed(1)), // percentage score
+      timeSpent: Math.max(0, Math.round(timeSpent)),
+      attempted: attempt.attemptedCount || 0,
+      correct: attempt.correctCount || 0,
+      wrong: attempt.wrongCount || 0,
+      totalMarks: attempt.totalMarks || 0,
+      obtainedMarks: attempt.obtainedMarks || 0,
     });
 
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
+

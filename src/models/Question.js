@@ -1,10 +1,90 @@
 import mongoose from "mongoose";
 
+/* =====================================================
+   OPTION SCHEMA (Exactly 4 options required everywhere)
+===================================================== */
 const optionSchema = new mongoose.Schema({
-  english: { type: String },
-  hindi: { type: String },
+  id: {
+    type: String, // "A", "B", "C", "D"
+    enum: ["A", "B", "C", "D"],
+    required: true,
+  },
+  text: {
+    english: { type: String, required: true },
+    hindi: { type: String },
+  },
 });
 
+
+/* =====================================================
+   CHILD QUESTION SCHEMA (Used in Passage)
+===================================================== */
+const childQuestionSchema = new mongoose.Schema({
+  type: {
+    type: String,
+    enum: ["MCQ", "MSQ", "ASSERTION_REASON", "MATH"],
+    required: true,
+  },
+
+  /* -------- Normal Question Text -------- */
+  questionText: {
+    english: { type: String },
+    hindi: { type: String },
+  },
+
+  /* -------- Assertion Reason -------- */
+  assertion: {
+    english: { type: String },
+    hindi: { type: String },
+  },
+
+  reason: {
+    english: { type: String },
+    hindi: { type: String },
+  },
+
+  /* -------- Math Image -------- */
+  image: {
+    type: String, // optional
+  },
+
+  imagePublicId: {
+  type: String,
+},
+
+  /* -------- 4 Options -------- */
+  options: {
+    type: [optionSchema],
+    validate: [(val) => val.length === 4, "Exactly 4 options required"],
+    required: true,
+  },
+
+  /* -------- Correct Answers -------- */
+  correctAnswers: {
+    type: [String], // ["A"] or ["A","C"]
+    required: true,
+  },
+
+  marks: {
+    type: Number,
+    default: 1,
+  },
+
+  negativeMarks: {
+    type: Number,
+    default: 0,
+  },
+
+  explanation: {
+    english: { type: String },
+    hindi: { type: String },
+  },
+});
+
+
+/* =====================================================
+   MAIN QUESTION SCHEMA
+===================================================== */
 const questionSchema = new mongoose.Schema(
   {
     testId: {
@@ -13,68 +93,93 @@ const questionSchema = new mongoose.Schema(
       required: true,
     },
 
-    type: {
+    section: {
       type: String,
-      enum: ["MCQ", "MSQ", "MATH", "ASSERTION_REASON", "PASSAGE"],
-      default: "MCQ",
     },
 
-     // ✅ NEW PROPER PASSAGE FIELD
-    passage: {
-      english: { type: String, default: "" },
-      hindi: { type: String, default: "" },
+    type: {
+      type: String,
+      enum: ["MCQ", "MSQ", "ASSERTION_REASON", "MATH", "PASSAGE"],
+      required: true,
     },
-// ✅ ADD THIS
-passageGroupId: {
-  type: String,
-  default: null,
-},
-    
+
+    difficulty: {
+      type: String,
+      enum: ["EASY", "MEDIUM", "HARD"],
+      default: "MEDIUM",
+    },
+
+    /* ===================================
+       NORMAL QUESTION FIELDS
+    =================================== */
+
     questionText: {
       english: { type: String },
       hindi: { type: String },
     },
 
-    options: [optionSchema],
+    /* -------- Assertion Reason -------- */
+    assertion: {
+      english: { type: String },
+      hindi: { type: String },
+    },
 
-    // optional meta (stores Hindi-specific auxiliary fields like HI options, AR pieces)
-    meta: {
-      hi: {
-        correctAnswer: { type: String },
-        questionText: { type: String },
-        options: [optionSchema],
-        assertionText: { type: String },
-        reasonText: { type: String },
+    reason: {
+      english: { type: String },
+      hindi: { type: String },
+    },
+
+    /* -------- Math Image -------- */
+    image: {
+      type: String, // optional (mainly for MATH)
+    },
+
+    options: {
+      type: [optionSchema],
+      validate: {
+        validator: function (val) {
+          if (this.type === "PASSAGE") return true;
+          return val.length === 4;
+        },
+        message: "Exactly 4 options required",
       },
     },
 
-    // ✅ MCQ / MATH / AR
-    correctAnswer: { type: String, default: "" },
-
-    // optional uploaded image (for MATH)
-    questionImage: {
-      url: { type: String },
-      publicId: { type: String },
-    },
-
-    // ✅ MSQ (multiple answers)
-    correctAnswers: [{ type: String }],
-
-    // ✅ Question creation language (for answer validation)
-    questionLang: {
-      type: String,
-      enum: ["english", "hindi"],
-      default: "english",
+    correctAnswers: {
+      type: [String],
     },
 
     marks: {
       type: Number,
-      required: true,
+      default: 1,
     },
 
     negativeMarks: {
       type: Number,
       default: 0,
+    },
+
+    explanation: {
+      english: { type: String },
+      hindi: { type: String },
+    },
+
+    /* ===================================
+       PASSAGE TYPE FIELDS
+    =================================== */
+
+    passageText: {
+      english: { type: String },
+      hindi: { type: String },
+    },
+
+    passageQuestions: {
+      type: [childQuestionSchema],
+    },
+
+    isActive: {
+      type: Boolean,
+      default: true,
     },
   },
   { timestamps: true }
