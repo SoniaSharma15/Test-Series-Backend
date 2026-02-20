@@ -4,6 +4,7 @@ import Payment from "../models/Payment.js";
 import Enrollment from "../models/Enrollment.js";
 import TestSeries from "../models/TestSeries.js";
 import { sendEmail } from "../services/email.service.js";
+import path from "path";
 import PDFDocument from "pdfkit";
 
 export const getPaymentHistory = async (req, res) => {
@@ -300,6 +301,8 @@ export const downloadReceipt = async (req, res) => {
     const TEXT_LIGHT = "#64748b";
     const BG_SOFT = "#f8fafc";
 
+
+    
     // Header Background
     doc.rect(0, 0, doc.page.width, 160).fill(DEEP_NAVY);
 
@@ -316,13 +319,27 @@ export const downloadReceipt = async (req, res) => {
       .fillColor(ACCENT_BLUE)
       .text("Official Academic Transaction Receipt", 50, 85, { characterSpacing: 1 });
 
-    // Status Indicator
-    doc.circle(520, 70, 35).fill("#ffffff20");
-    doc
-      .fillColor("#ffffff")
-      .fontSize(10)
-      .font("Helvetica-Bold")
-      .text("PAID", 503, 65);
+// ================= STATUS ICON (loader.png) =================
+const statusIconPath = path.join(process.cwd(), "src", "assets", "loader.png");
+// image size (circle ke approx barabar)
+const iconSize = 55;
+
+// exact wahi jagah jahan green circle tha
+const iconX = 520 - iconSize / 2;
+const iconY = 70 - iconSize / 2;
+
+try {
+  doc.save();
+  doc.opacity(0.99); // clear & visible
+  doc.image(statusIconPath, iconX, iconY, {
+    width: iconSize,
+    height: iconSize,
+  });
+  doc.restore();
+} catch (e) {
+  console.log("Status icon not loaded:", e.message);
+}
+
 
     // ================= DESCRIPTIVE INFO PANEL =================
     doc.rect(50, 180, 500, 100).fill(BG_SOFT);
@@ -357,7 +374,34 @@ export const downloadReceipt = async (req, res) => {
       .text(`Invoice Number: ${invoiceNumber}`, 350, 215)
       .text(`Date: ${new Date(payment.createdAt).toLocaleDateString("en-IN")}`, 350, 230)
       .text(`Order ID: ${payment.orderId}`, 350, 245);
+// ================= PAGE WATERMARK =================
+const watermarkPath = path.join(process.cwd(), "src", "assets", "loader.png");
 
+try {
+  const pageWidth = doc.page.width;
+  const pageHeight = doc.page.height;
+
+  doc.save();
+
+  // 👇 very light opacity (perfect watermark)
+  doc.opacity(0.2);
+
+  // 👇 center me large watermark
+  const wmSize = 420;
+  doc.image(
+    watermarkPath,
+    (pageWidth - wmSize) / 2,
+    (pageHeight - wmSize) / 2,
+    {
+      width: wmSize,
+      height: wmSize,
+    }
+  );
+
+  doc.restore();
+} catch (err) {
+  console.log("Watermark not loaded:", err.message);
+}
     // ================= PRODUCT DESCRIPTION SECTION =================
     doc.moveDown(8);
     
@@ -400,7 +444,13 @@ export const downloadReceipt = async (req, res) => {
     // ================= FINANCIAL BREAKDOWN =================
     const summaryY = tableTop + 100;
 
-    doc.rect(320, summaryY, 230, 120).strokeColor(BG_SOFT).stroke();
+   doc
+  .save()
+  .lineWidth(0.7)                 // thinner border
+  .strokeColor("#000000")
+  .rect(320, summaryY, 230, 120)
+  .stroke()
+  .restore();
 
     const drawRow = (label, value, y, isBold = false) => {
       doc
@@ -414,7 +464,12 @@ export const downloadReceipt = async (req, res) => {
     drawRow("Sub-Total", basePrice, summaryY + 20);
     drawRow("Tax (GST 18%)", gstAmount, summaryY + 45);
     
-    doc.rect(340, summaryY + 70, 200, 1).fill(BG_SOFT);
+    doc
+  .save()
+  .opacity(0.6)
+  .rect(340, summaryY + 70, 200, 0.8)
+  .fill("#000000") 
+  .restore();
     drawRow("Total Amount", totalPaid, summaryY + 85, true);
 
     // ================= SECURE VERIFICATION =================
