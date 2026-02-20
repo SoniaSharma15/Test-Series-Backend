@@ -10,7 +10,7 @@ const optionSchema = new mongoose.Schema({
     required: true,
   },
   text: {
-    english: { type: String, required: true },
+    english: { type: String},
     hindi: { type: String },
   },
 });
@@ -67,12 +67,12 @@ const childQuestionSchema = new mongoose.Schema({
 
   marks: {
     type: Number,
-    default: 1,
+    default: 2,
   },
 
   negativeMarks: {
     type: Number,
-    default: 0,
+    default: 0.33,
   },
 
   explanation: {
@@ -151,12 +151,12 @@ const questionSchema = new mongoose.Schema(
 
     marks: {
       type: Number,
-      default: 1,
+      default: 2,
     },
 
     negativeMarks: {
       type: Number,
-      default: 0,
+      default: 0.33,
     },
 
     explanation: {
