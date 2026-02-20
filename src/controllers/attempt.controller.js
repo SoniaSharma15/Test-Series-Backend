@@ -178,6 +178,7 @@ export const getExamData = async (req, res) => {
 export const submitAttempt = async (req, res) => {
   try {
     const { attemptId, answers = [] } = req.body;
+    console.log("Received Answers:", answers);
 
     const attempt = await Attempt.findById(attemptId);
     if (!attempt)
@@ -387,25 +388,99 @@ export const heartbeat = async (req, res) => {
 };
 
 
-export const reportViolation = async (req, res) => {
-  const { attemptId, type } = req.body;
+const evaluateAttempt = async (attempt, submittedAnswers = []) => {
 
-  const attempt = await Attempt.findById(attemptId);
+  const questions = await Question.find({
+    testId: attempt.testId,
+    isActive: true,
+  }).lean();
 
-  if (!attempt || attempt.status !== "IN_PROGRESS")
-    return res.json();
+  const flattened = [];
 
-  if (type === "TAB") attempt.tabSwitchCount += 1;
-  if (type === "FULLSCREEN") attempt.fullscreenExitCount += 1;
-
-  if (attempt.tabSwitchCount >= 3) {
-    attempt.status = "TERMINATED";
+  for (const q of questions) {
+    if (q.type === "PASSAGE") {
+      q.passageQuestions.forEach((child, index) => {
+        flattened.push({
+          parentId: q._id,
+          childIndex: index,
+          ...child,
+        });
+      });
+    } else {
+      flattened.push({
+        parentId: q._id,
+        childIndex: null,
+        ...q,
+      });
+    }
   }
 
-  await attempt.save();
+  let totalMarks = 0;
+  let obtainedMarks = 0;
+  let correctCount = 0;
+  let wrongCount = 0;
+  let attemptedCount = 0;
 
-  res.json({ message: "Violation recorded" });
+  const evaluatedAnswers = [];
+
+  for (const q of flattened) {
+    totalMarks += q.marks;
+
+    evaluatedAnswers.push({
+      questionId: q.parentId,
+      childIndex: q.childIndex,
+      questionType: q.type,
+      selectedAnswers: [],
+      correctAnswersSnapshot: q.correctAnswers || [],
+      marks: q.marks,
+      negativeMarks: q.negativeMarks,
+      isCorrect: false,
+      marksAwarded: 0,
+    });
+  }
+
+  attempt.answers = evaluatedAnswers;
+  attempt.totalMarks = totalMarks;
+  attempt.obtainedMarks = obtainedMarks;
+  attempt.correctCount = correctCount;
+  attempt.wrongCount = wrongCount;
+  attempt.attemptedCount = attemptedCount;
+  attempt.unattemptedCount = flattened.length;
 };
+
+
+export const reportViolation = async (req, res) => {
+  try {
+    const { attemptId, type } = req.body;
+
+    const attempt = await Attempt.findById(attemptId);
+
+    if (!attempt || attempt.status !== "IN_PROGRESS") {
+      return res.json({
+        shouldAutoSubmit: false,
+        totalViolations: 0
+      });
+    }
+
+    if (type === "TAB") attempt.tabSwitchCount += 1;
+    if (type === "FULLSCREEN") attempt.fullscreenExitCount += 1;
+
+    const totalViolations =
+      attempt.tabSwitchCount + attempt.fullscreenExitCount;
+
+    await attempt.save();
+
+    return res.json({
+      shouldAutoSubmit: totalViolations >= 5,
+      totalViolations
+    });
+
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+
 
 
 export const getPublicTestDetails = async (req, res) => {
