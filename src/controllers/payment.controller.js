@@ -23,7 +23,7 @@ export const getPaymentHistory = async (req, res) => {
       amount: p.amount,
       status: p.status,
       date: p.createdAt,
-      courseName: p.testSeriesId?.title || "N/A",
+      courseName: p.testSeriesId?.title || "Batch Expired",
       coursePrice: p.testSeriesId?.price || p.amount,
     }));
 
@@ -337,7 +337,7 @@ try {
   });
   doc.restore();
 } catch (e) {
-  console.log("Status icon not loaded:", e.message);
+  
 }
 
 
@@ -400,7 +400,7 @@ try {
 
   doc.restore();
 } catch (err) {
-  console.log("Watermark not loaded:", err.message);
+  
 }
     // ================= PRODUCT DESCRIPTION SECTION =================
     doc.moveDown(8);
