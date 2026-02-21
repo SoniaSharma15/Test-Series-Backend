@@ -3,18 +3,29 @@ import TestSeries from "../models/TestSeries.js";
 import Test from "../models/Test.js";
 import Attempt from "../models/Attempt.js";
 
-export const getMyEnrollments = async (req, res) => {
+export const getMyEnrollments = async (req, res, next) => {
   try {
-    if (!req.user) {
-      return res.status(401).json({ message: "Unauthorized" });
+    const studentId = req.user?._id;
+
+    if (!studentId) {
+      const err = new Error("Unauthorized");
+      err.statusCode = 401;
+      throw err;
     }
 
-    const studentId = req.user._id;
     const now = new Date();
 
-    const enrollments = await Enrollment.find({
-      studentId,
-    }).populate("testSeriesId");
+    /* ================= FETCH ENROLLMENTS ================= */
+
+    const enrollments = await Enrollment.find({ studentId })
+      .populate("testSeriesId");
+
+    if (!enrollments.length) {
+      return res.status(200).json({
+        success: true,
+        data: [],
+      });
+    }
 
     const result = [];
 
@@ -22,7 +33,7 @@ export const getMyEnrollments = async (req, res) => {
       const series = enrollment.testSeriesId;
       if (!series) continue;
 
-      /* ================= EXPIRY LOGIC ================= */
+      /* ================= EXPIRY CHECK ================= */
 
       let expiryDate = null;
 
@@ -32,44 +43,59 @@ export const getMyEnrollments = async (req, res) => {
         expiryDate.setDate(start.getDate() + series.duration);
       }
 
-      if (expiryDate && now > expiryDate) {
-        continue;
-      }
+      if (expiryDate && now > expiryDate) continue;
 
-      /* ================= FETCH TESTS ================= */
+      /* ================= FETCH ALL TESTS ================= */
 
       const tests = await Test.find({
         testSeriesId: series._id,
       });
 
-      const testsWithBestScore = [];
+      const testIds = tests.map((t) => t._id);
 
-      for (const test of tests) {
+      /* ================= FETCH ALL ATTEMPTS IN ONE QUERY ================= */
 
-        // ✅ Only count completed attempts
-        const attempts = await Attempt.find({
-          studentId,
-          testId: test._id,
-          status: { $in: ["COMPLETED", "AUTO_SUBMITTED"] },
-        });
+      const attempts = await Attempt.find({
+        studentId,
+        testId: { $in: testIds },
+        status: { $in: ["COMPLETED", "AUTO_SUBMITTED"] },
+      });
 
-        let bestScore = 0;
-        let alreadyAttempted = false;
+      /* ================= GROUP ATTEMPTS BY TEST ================= */
 
-        if (attempts.length > 0) {
-          alreadyAttempted = true;
+      const attemptMap = new Map();
 
-          bestScore = Math.max(
-            ...attempts.map((a) => a.score || 0)
-          );
+      for (const attempt of attempts) {
+        const key = attempt.testId.toString();
+
+        const totalMarks = attempt.totalMarks || 0;
+        const obtainedMarks = attempt.obtainedMarks || 0;
+
+        const percentage =
+          totalMarks > 0 ? (obtainedMarks / totalMarks) * 100 : 0;
+
+        if (!attemptMap.has(key)) {
+          attemptMap.set(key, []);
         }
 
-        testsWithBestScore.push({
-          test,
-          bestScore,
-          alreadyAttempted,   // 🔥 IMPORTANT FIELD
-        });
+        attemptMap.get(key).push(percentage);
       }
+
+      /* ================= BUILD TEST RESPONSE ================= */
+
+      const testsWithBestScore = tests.map((test) => {
+        const key = test._id.toString();
+        const scores = attemptMap.get(key) || [];
+
+        return {
+          test,
+          bestScore:
+            scores.length > 0
+              ? Number(Math.max(...scores).toFixed(2))
+              : 0,
+          alreadyAttempted: scores.length > 0,
+        };
+      });
 
       /* ================= REMAINING DAYS ================= */
 
@@ -90,9 +116,12 @@ export const getMyEnrollments = async (req, res) => {
       });
     }
 
-    res.json(result);
+    res.status(200).json({
+      success: true,
+      data: result,
+    });
+
   } catch (error) {
-    console.error("Get My Enrollments Error:", error);
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };

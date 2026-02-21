@@ -3,18 +3,43 @@ import User from "../models/User.js";
 
 export const protect = async (req, res, next) => {
   try {
-    const token = req.headers.authorization?.split(" ")[1];
-
-    if (!token) {
-      return res.status(401).json({ message: "Not authorized" });
+    if (!process.env.JWT_SECRET) {
+      const err = new Error("JWT secret not configured");
+      err.statusCode = 500;
+      throw err;
     }
+
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      const err = new Error("Not authorized");
+      err.statusCode = 401;
+      throw err;
+    }
+
+    const token = authHeader.split(" ")[1];
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    req.user = await User.findById(decoded.id).select("-password");
+    const user = await User.findById(decoded.id).select("-password");
+
+    if (!user) {
+      const err = new Error("User no longer exists");
+      err.statusCode = 401;
+      throw err;
+    }
+
+    if (user.isBlocked) {
+      const err = new Error("User account is blocked");
+      err.statusCode = 403;
+      throw err;
+    }
+
+    req.user = user;
 
     next();
   } catch (error) {
-    res.status(401).json({ message: "Token invalid" });
+    error.statusCode = error.statusCode || 401;
+    next(error);
   }
 };

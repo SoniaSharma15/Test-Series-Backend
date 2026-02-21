@@ -1,35 +1,65 @@
 import Attempt from "../models/Attempt.js";
 import Question from "../models/Question.js";
 import Test from "../models/Test.js";
-
+import mongoose from "mongoose";
 /* =====================================================
    1️⃣ START ATTEMPT
 ===================================================== */
-export const startAttempt = async (req, res) => {
+export const startAttempt = async (req, res, next) => {
   try {
     const { testId } = req.body;
-    const studentId = req.user._id;
+    const studentId = req.user?._id;
+
+    /* ================= VALIDATION ================= */
+
+    if (!testId) {
+      const err = new Error("TestId is required");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    if (!studentId) {
+      const err = new Error("Unauthorized");
+      err.statusCode = 401;
+      throw err;
+    }
+
+    /* ================= CHECK TEST ================= */
 
     const test = await Test.findById(testId);
-    if (!test)
-      return res.status(404).json({ message: "Test not found" });
 
-    // Prevent multiple active attempts
-    const existing = await Attempt.findOne({
+    if (!test) {
+      const err = new Error("Test not found");
+      err.statusCode = 404;
+      throw err;
+    }
+
+    /* ================= PREVENT MULTIPLE ACTIVE ================= */
+
+    const existingAttempt = await Attempt.findOne({
       studentId,
       testId,
-      status: { $in: ["IN_PROGRESS"] },
+      status: "IN_PROGRESS",
     });
 
-    if (existing) {
+    if (existingAttempt) {
       return res.status(200).json({
-        attemptId: existing._id,
+        success: true,
+        attemptId: existingAttempt._id,
         resumed: true,
       });
     }
 
-    const attemptNumber =
-      (await Attempt.countDocuments({ studentId, testId })) + 1;
+    /* ================= ATTEMPT NUMBER ================= */
+
+    const attemptCount = await Attempt.countDocuments({
+      studentId,
+      testId,
+    });
+
+    const attemptNumber = attemptCount + 1;
+
+    /* ================= CREATE ATTEMPT ================= */
 
     const attempt = await Attempt.create({
       studentId,
@@ -38,53 +68,81 @@ export const startAttempt = async (req, res) => {
       duration: test.duration,
       startedAt: new Date(),
       ipAddress: req.ip,
-      userAgent: req.headers["user-agent"],
+      userAgent: req.headers["user-agent"] || "unknown",
       lastHeartbeat: new Date(),
       status: "IN_PROGRESS",
       tabSwitchCount: 0,
       fullscreenExitCount: 0,
     });
 
+    /* ================= RESPONSE ================= */
+
     res.status(201).json({
+      success: true,
       attemptId: attempt._id,
       resumed: false,
     });
 
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 
 /* =====================================================
    2️⃣ GET PERFORMANCE
 ===================================================== */
-export const getPerformance = async (req, res) => {
+export const getPerformance = async (req, res, next) => {
   try {
-    const studentId = req.user._id;
+    const studentId = req.user?._id;
 
-    // ✅ Only completed attempts
+    if (!studentId) {
+      const err = new Error("Unauthorized");
+      err.statusCode = 401;
+      throw err;
+    }
+
+    /* ================= FETCH COMPLETED ATTEMPTS ================= */
+
     const attempts = await Attempt.find({
       studentId,
-      status: { $in: ["COMPLETED", "AUTO_SUBMITTED"] }
-    }).populate({
-      path: "testId",
-      populate: {
-        path: "testSeriesId",
-        select: "title"
-      }
-    });
+      status: { $in: ["COMPLETED", "AUTO_SUBMITTED"] },
+    })
+      .populate({
+        path: "testId",
+        populate: {
+          path: "testSeriesId",
+          select: "title",
+        },
+      })
+      .sort({ submittedAt: -1 }); // DB level sorting
 
     const totalAttempts = attempts.length;
+
+    if (totalAttempts === 0) {
+      return res.json({
+        success: true,
+        totalAttempts: 0,
+        averageScore: 0,
+        highestScore: 0,
+        passFailRatio: "0/0",
+        recentResults: [],
+        latestBatchName: "N/A",
+        latestTestName: "N/A",
+      });
+    }
+
+    /* ================= CALCULATIONS ================= */
 
     let totalPercentage = 0;
     let highestScore = 0;
     let passCount = 0;
 
     for (const attempt of attempts) {
+      const totalMarks = attempt.totalMarks || 0;
+      const obtainedMarks = attempt.obtainedMarks || 0;
+
       const percentage =
-        attempt.totalMarks > 0
-          ? (attempt.obtainedMarks / attempt.totalMarks) * 100
-          : 0;
+        totalMarks > 0 ? (obtainedMarks / totalMarks) * 100 : 0;
 
       totalPercentage += percentage;
 
@@ -92,37 +150,33 @@ export const getPerformance = async (req, res) => {
         highestScore = percentage;
       }
 
-      if (
-        attempt.testId &&
-        percentage >= attempt.testId.passingMarks
-      ) {
+      const passingMarks = attempt.testId?.passingMarks || 0;
+
+      if (percentage >= passingMarks) {
         passCount++;
       }
     }
 
-    const averageScore =
-      totalAttempts > 0
-        ? totalPercentage / totalAttempts
-        : 0;
+    const averageScore = totalPercentage / totalAttempts;
+    const passFailRatio = `${passCount}/${totalAttempts}`;
 
-    const passFailRatio =
-      totalAttempts > 0 ? `${passCount}/${totalAttempts}` : "0/0";
+    /* ================= RECENT RESULTS ================= */
 
-    // ✅ Sort by latest
-    const sortedAttempts = attempts.sort(
-      (a, b) => new Date(b.submittedAt) - new Date(a.submittedAt)
-    );
+    const recentResults = attempts.slice(0, 5).map((attempt) => {
+      const totalMarks = attempt.totalMarks || 0;
+      const obtainedMarks = attempt.obtainedMarks || 0;
 
-    const recentResults = sortedAttempts
-      .slice(0, 5)
-      .map((attempt) => ({
+      return {
         score:
-          attempt.totalMarks > 0
-            ? (attempt.obtainedMarks / attempt.totalMarks) * 100
+          totalMarks > 0
+            ? (obtainedMarks / totalMarks) * 100
             : 0,
-      }));
+      };
+    });
 
-    const latestAttempt = sortedAttempts[0];
+    /* ================= LATEST ATTEMPT INFO ================= */
+
+    const latestAttempt = attempts[0];
 
     const latestBatchName =
       latestAttempt?.testId?.testSeriesId?.title || "N/A";
@@ -130,10 +184,13 @@ export const getPerformance = async (req, res) => {
     const latestTestName =
       latestAttempt?.testId?.name || "N/A";
 
-    res.json({
+    /* ================= RESPONSE ================= */
+
+    res.status(200).json({
+      success: true,
       totalAttempts,
-      averageScore,
-      highestScore,
+      averageScore: Number(averageScore.toFixed(2)),
+      highestScore: Number(highestScore.toFixed(2)),
       passFailRatio,
       recentResults,
       latestBatchName,
@@ -141,33 +198,76 @@ export const getPerformance = async (req, res) => {
     });
 
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 
 
-export const getExamData = async (req, res) => {
+export const getExamData = async (req, res, next) => {
   try {
     const { attemptId } = req.params;
+    const studentId = req.user?._id;
+
+    /* ================= VALIDATION ================= */
+
+    if (!attemptId) {
+      const err = new Error("AttemptId is required");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(attemptId)) {
+      const err = new Error("Invalid AttemptId");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    if (!studentId) {
+      const err = new Error("Unauthorized");
+      err.statusCode = 401;
+      throw err;
+    }
+
+    /* ================= FETCH ATTEMPT ================= */
 
     const attempt = await Attempt.findById(attemptId)
       .populate("testId");
 
-    if (!attempt)
-      return res.status(404).json({ message: "Attempt not found" });
+    if (!attempt) {
+      const err = new Error("Attempt not found");
+      err.statusCode = 404;
+      throw err;
+    }
 
-    if (attempt.studentId.toString() !== req.user._id.toString())
-      return res.status(403).json({ message: "Unauthorized" });
+    /* ================= OWNERSHIP CHECK ================= */
 
-    if (attempt.status !== "IN_PROGRESS")
-      return res.status(409).json({ message: "Already submitted" });
+    if (attempt.studentId.toString() !== studentId.toString()) {
+      const err = new Error("Unauthorized access");
+      err.statusCode = 403;
+      throw err;
+    }
+
+    /* ================= STATUS CHECK ================= */
+
+    if (attempt.status !== "IN_PROGRESS") {
+      const err = new Error("Test already submitted");
+      err.statusCode = 409;
+      throw err;
+    }
+
+    /* ================= FETCH QUESTIONS ================= */
 
     const questions = await Question.find({
       testId: attempt.testId._id,
       isActive: true,
-    }).lean();
+    })
+      .select("-correctAnswer -explanation") // 🔥 prevent cheating
+      .lean();
 
-    res.json({
+    /* ================= RESPONSE ================= */
+
+    res.status(200).json({
+      success: true,
       test: attempt.testId,
       questions,
       startedAt: attempt.startedAt,
@@ -175,62 +275,87 @@ export const getExamData = async (req, res) => {
     });
 
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 
 
 
-export const submitAttempt = async (req, res) => {
+export const submitAttempt = async (req, res, next) => {
   try {
     const { attemptId, answers = [] } = req.body;
+    const studentId = req.user?._id;
+
+    /* ================= VALIDATION ================= */
+
+    if (!attemptId) {
+      const err = new Error("AttemptId is required");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(attemptId)) {
+      const err = new Error("Invalid AttemptId");
+      err.statusCode = 400;
+      throw err;
+    }
 
     const attempt = await Attempt.findById(attemptId);
-    if (!attempt)
-      return res.status(404).json({ message: "Attempt not found" });
 
-    if (attempt.studentId.toString() !== req.user._id.toString())
-      return res.status(403).json({ message: "Unauthorized" });
+    if (!attempt) {
+      const err = new Error("Attempt not found");
+      err.statusCode = 404;
+      throw err;
+    }
 
-    if (attempt.status !== "IN_PROGRESS")
-      return res.status(400).json({ message: "Already submitted" });
+    if (attempt.studentId.toString() !== studentId.toString()) {
+      const err = new Error("Unauthorized");
+      err.statusCode = 403;
+      throw err;
+    }
+
+    if (attempt.status !== "IN_PROGRESS") {
+      const err = new Error("Attempt already submitted");
+      err.statusCode = 409;
+      throw err;
+    }
+
+    /* ================= FETCH QUESTIONS ================= */
 
     const questions = await Question.find({
       testId: attempt.testId,
       isActive: true,
     }).lean();
 
-    /* =====================================================
-       FLATTEN QUESTIONS (Handle PASSAGE)
-    ===================================================== */
+    /* ================= FLATTEN QUESTIONS ================= */
 
     const flattened = [];
 
     for (const q of questions) {
       if (q.type === "PASSAGE") {
-        q.passageQuestions.forEach((child, index) => {
+        q.passageQuestions?.forEach((child, index) => {
           flattened.push({
-            parentId: q._id,
+            parentId: q._id.toString(),
             childIndex: index,
             ...child,
           });
         });
       } else {
         flattened.push({
-          parentId: q._id,
+          parentId: q._id.toString(),
           childIndex: null,
           ...q,
         });
       }
     }
 
-    /* =====================================================
-       MAP STUDENT ANSWERS
-    ===================================================== */
+    /* ================= MAP ANSWERS ================= */
 
     const answerMap = new Map();
 
     for (const ans of answers) {
+      if (!ans.questionId) continue;
+
       const key = `${ans.questionId}_${ans.childIndex ?? "main"}`;
 
       let selected = [];
@@ -244,10 +369,7 @@ export const submitAttempt = async (req, res) => {
       answerMap.set(key, selected);
     }
 
-
-    /* =====================================================
-       SCORING
-    ===================================================== */
+    /* ================= SCORING ================= */
 
     let totalMarks = 0;
     let obtainedMarks = 0;
@@ -262,7 +384,10 @@ export const submitAttempt = async (req, res) => {
       const selected = answerMap.get(key) || [];
       const correct = q.correctAnswers || [];
 
-      totalMarks += q.marks;
+      const questionMarks = Number(q.marks) || 0;
+      const negativeMarks = Number(q.negativeMarks) || 0;
+
+      totalMarks += questionMarks;
 
       let isCorrect = false;
       let marksAwarded = 0;
@@ -276,10 +401,10 @@ export const submitAttempt = async (req, res) => {
 
         if (isExactMatch) {
           isCorrect = true;
-          marksAwarded = q.marks;
+          marksAwarded = questionMarks;
           correctCount++;
         } else {
-          marksAwarded = -Math.abs(q.negativeMarks || 0);
+          marksAwarded = -Math.abs(negativeMarks);
           wrongCount++;
         }
 
@@ -292,16 +417,14 @@ export const submitAttempt = async (req, res) => {
         questionType: q.type,
         selectedAnswers: selected,
         correctAnswersSnapshot: correct,
-        marks: q.marks,
-        negativeMarks: q.negativeMarks,
+        marks: questionMarks,
+        negativeMarks,
         isCorrect,
         marksAwarded,
       });
     }
 
-    /* =====================================================
-       FINALIZE ATTEMPT
-    ===================================================== */
+    /* ================= FINALIZE ================= */
 
     attempt.answers = evaluatedAnswers;
     attempt.totalMarks = totalMarks;
@@ -315,7 +438,10 @@ export const submitAttempt = async (req, res) => {
 
     await attempt.save();
 
-    res.json({
+    /* ================= RESPONSE ================= */
+
+    res.status(200).json({
+      success: true,
       message: "Test submitted successfully",
       totalMarks,
       obtainedMarks: attempt.obtainedMarks,
@@ -326,34 +452,68 @@ export const submitAttempt = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Submit Error:", error);
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 
 
-export const getResult = async (req, res) => {
+export const getResult = async (req, res, next) => {
   try {
     const { attemptId } = req.params;
+    const studentId = req.user?._id;
+
+    /* ================= VALIDATION ================= */
+
+    if (!attemptId) {
+      const err = new Error("AttemptId is required");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(attemptId)) {
+      const err = new Error("Invalid AttemptId");
+      err.statusCode = 400;
+      throw err;
+    }
 
     const attempt = await Attempt.findById(attemptId)
       .populate("testId")
       .populate("answers.questionId");
 
-    if (!attempt)
-      return res.status(404).json({ message: "Not found" });
+    if (!attempt) {
+      const err = new Error("Result not found");
+      err.statusCode = 404;
+      throw err;
+    }
 
-    /* ==========================================
-       TRANSFORM ANSWERS (HANDLE PASSAGE PROPERLY)
-    ========================================== */
+    /* ================= OWNERSHIP CHECK ================= */
+
+    if (attempt.studentId.toString() !== studentId.toString()) {
+      const err = new Error("Unauthorized access");
+      err.statusCode = 403;
+      throw err;
+    }
+
+    /* ================= STATUS CHECK ================= */
+
+    if (!["COMPLETED", "AUTO_SUBMITTED"].includes(attempt.status)) {
+      const err = new Error("Result not available yet");
+      err.statusCode = 409;
+      throw err;
+    }
+
+    /* ================= TRANSFORM ANSWERS ================= */
 
     const transformedAnswers = attempt.answers.map((ans) => {
       const parent = ans.questionId;
 
       let questionData = null;
 
-      // 🔹 If Passage → pick child question
-      if (parent.type === "PASSAGE" && ans.childIndex !== null) {
+      if (
+        parent?.type === "PASSAGE" &&
+        ans.childIndex !== null &&
+        parent.passageQuestions?.[ans.childIndex]
+      ) {
         questionData = parent.passageQuestions[ans.childIndex];
       } else {
         questionData = parent;
@@ -361,35 +521,123 @@ export const getResult = async (req, res) => {
 
       return {
         ...ans.toObject(),
-        questionData, // 🔥 send proper question
+        questionData,
       };
     });
 
-    res.json({
+    /* ================= RESPONSE ================= */
+
+    res.status(200).json({
+      success: true,
       ...attempt.toObject(),
       answers: transformedAnswers,
     });
 
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 
 
 
-export const getTestById = async (req, res) => {
-  const test = await Test.findById(req.params.id);
-  res.json(test);
+export const getTestById = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    /* ================= VALIDATION ================= */
+
+    if (!id) {
+      const err = new Error("Test ID is required");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      const err = new Error("Invalid Test ID");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    /* ================= FETCH TEST ================= */
+
+    const test = await Test.findById(id);
+
+    if (!test) {
+      const err = new Error("Test not found");
+      err.statusCode = 404;
+      throw err;
+    }
+
+    /* ================= RESPONSE ================= */
+
+    res.status(200).json({
+      success: true,
+      data: test,
+    });
+
+  } catch (error) {
+    next(error);
+  }
 };
 
-export const heartbeat = async (req, res) => {
-  const { attemptId } = req.body;
+export const heartbeat = async (req, res, next) => {
+  try {
+    const { attemptId } = req.body;
+    const studentId = req.user?._id;
 
-  await Attempt.findByIdAndUpdate(attemptId, {
-    lastHeartbeat: new Date(),
-  });
+    /* ================= VALIDATION ================= */
 
-  res.json({ status: "alive" });
+    if (!attemptId) {
+      const err = new Error("AttemptId is required");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(attemptId)) {
+      const err = new Error("Invalid AttemptId");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    /* ================= FIND ATTEMPT ================= */
+
+    const attempt = await Attempt.findById(attemptId);
+
+    if (!attempt) {
+      const err = new Error("Attempt not found");
+      err.statusCode = 404;
+      throw err;
+    }
+
+    /* ================= OWNERSHIP CHECK ================= */
+
+    if (attempt.studentId.toString() !== studentId.toString()) {
+      const err = new Error("Unauthorized");
+      err.statusCode = 403;
+      throw err;
+    }
+
+    /* ================= STATUS CHECK ================= */
+
+    if (attempt.status !== "IN_PROGRESS") {
+      const err = new Error("Attempt already submitted");
+      err.statusCode = 409;
+      throw err;
+    }
+
+    /* ================= UPDATE HEARTBEAT ================= */
+
+    attempt.lastHeartbeat = new Date();
+    await attempt.save();
+
+    res.status(200).json({
+      success: true,
+      status: "alive",
+    });
+
+  } catch (error) {
+    next(error);
+  }
 };
 
 
@@ -454,107 +702,197 @@ const evaluateAttempt = async (attempt, submittedAnswers = []) => {
 };
 
 
-export const reportViolation = async (req, res) => {
+export const reportViolation = async (req, res, next) => {
   try {
     const { attemptId, type } = req.body;
+    const studentId = req.user?._id;
 
-    const attempt = await Attempt.findById(attemptId);
+    /* ================= VALIDATION ================= */
 
-    if (!attempt || attempt.status !== "IN_PROGRESS") {
-      return res.json({
+    if (!attemptId || !type) {
+      const err = new Error("AttemptId and type are required");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(attemptId)) {
+      const err = new Error("Invalid AttemptId");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // 🔒 Only serious violations allowed
+    const allowedTypes = ["TAB", "FULLSCREEN"];
+
+    if (!allowedTypes.includes(type)) {
+      const err = new Error("Invalid violation type");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    /* ================= ATOMIC UPDATE ================= */
+
+    const updateField =
+      type === "TAB"
+        ? { $inc: { tabSwitchCount: 1 } }
+        : { $inc: { fullscreenExitCount: 1 } };
+
+    const attempt = await Attempt.findOneAndUpdate(
+      {
+        _id: attemptId,
+        studentId,
+        status: "IN_PROGRESS",
+      },
+      updateField,
+      {
+        returnDocument: "after", // ✅ Mongoose 7+
+      }
+    );
+
+    if (!attempt) {
+      return res.status(200).json({
+        success: true,
         shouldAutoSubmit: false,
-        totalViolations: 0
+        totalViolations: 0,
       });
     }
 
-    if (type === "TAB") attempt.tabSwitchCount += 1;
-    if (type === "FULLSCREEN") attempt.fullscreenExitCount += 1;
+    /* ================= COUNT TOTAL ================= */
 
     const totalViolations =
-      attempt.tabSwitchCount + attempt.fullscreenExitCount;
+      (attempt.tabSwitchCount || 0) +
+      (attempt.fullscreenExitCount || 0);
 
-    await attempt.save();
+    const shouldAutoSubmit = totalViolations >= 5;
 
-    return res.json({
-      shouldAutoSubmit: totalViolations >= 5,
-      totalViolations
+    /* ================= RESPONSE ================= */
+
+    res.status(200).json({
+      success: true,
+      shouldAutoSubmit,
+      totalViolations,
     });
 
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 
 
-
-
-export const getPublicTestDetails = async (req, res) => {
+export const getPublicTestDetails = async (req, res, next) => {
   try {
     const { testId } = req.params;
+
+    /* ================= VALIDATION ================= */
+
+    if (!testId) {
+      const err = new Error("TestId is required");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(testId)) {
+      const err = new Error("Invalid TestId");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    /* ================= FETCH TEST ================= */
 
     const test = await Test.findById(testId)
       .select("name duration totalMarks passingMarks");
 
-    if (!test)
-      return res.status(404).json({ message: "Test not found" });
+    if (!test) {
+      const err = new Error("Test not found");
+      err.statusCode = 404;
+      throw err;
+    }
 
-    res.json(test);
+    /* ================= RESPONSE ================= */
+
+    res.status(200).json({
+      success: true,
+      data: test,
+    });
 
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 
 /* =====================================================
    9️⃣ RECENT PERFORMANCE
 ===================================================== */
-export const getRecentPerformance = async (req, res) => {
+export const getRecentPerformance = async (req, res, next) => {
   try {
-    const studentId = req.user._id;
+    const studentId = req.user?._id;
+
+    if (!studentId) {
+      const err = new Error("Unauthorized");
+      err.statusCode = 401;
+      throw err;
+    }
+
+    /* ================= FETCH LATEST COMPLETED ATTEMPT ================= */
 
     const attempt = await Attempt.findOne({
       studentId,
-      status: { $in: ["COMPLETED", "AUTO_SUBMITTED"] }
+      status: { $in: ["COMPLETED", "AUTO_SUBMITTED"] },
     })
       .sort({ submittedAt: -1 })
       .populate({
         path: "testId",
         populate: {
           path: "testSeriesId",
-          select: "title"
-        }
+          select: "title",
+        },
       });
 
-    if (!attempt) return res.json(null);
+    if (!attempt) {
+      return res.status(200).json({
+        success: true,
+        data: null,
+      });
+    }
 
-    // ✅ Calculate percentage safely
+    /* ================= CALCULATE PERCENTAGE ================= */
+
+    const totalMarks = Number(attempt.totalMarks) || 0;
+    const obtainedMarks = Number(attempt.obtainedMarks) || 0;
+
     const percentage =
-      attempt.totalMarks > 0
-        ? (attempt.obtainedMarks / attempt.totalMarks) * 100
-        : 0;
+      totalMarks > 0 ? (obtainedMarks / totalMarks) * 100 : 0;
 
-    // ✅ Calculate time safely
+    /* ================= CALCULATE TIME ================= */
+
     let timeSpent = 0;
+
     if (attempt.startedAt && attempt.submittedAt) {
       timeSpent =
         (new Date(attempt.submittedAt) - new Date(attempt.startedAt)) /
         60000;
     }
 
-    res.json({
-      batchName: attempt.testId?.testSeriesId?.title || "N/A",
-      testName: attempt.testId?.name || "N/A",
-      score: Number(percentage.toFixed(1)), // percentage score
-      timeSpent: Math.max(0, Math.round(timeSpent)),
-      attempted: attempt.attemptedCount || 0,
-      correct: attempt.correctCount || 0,
-      wrong: attempt.wrongCount || 0,
-      totalMarks: attempt.totalMarks || 0,
-      obtainedMarks: attempt.obtainedMarks || 0,
+    /* ================= RESPONSE ================= */
+
+    res.status(200).json({
+      success: true,
+      data: {
+        batchName:
+          attempt.testId?.testSeriesId?.title || "N/A",
+        testName: attempt.testId?.name || "N/A",
+        score: Number(percentage.toFixed(1)),
+        timeSpent: Math.max(0, Math.round(timeSpent)),
+        attempted: attempt.attemptedCount || 0,
+        correct: attempt.correctCount || 0,
+        wrong: attempt.wrongCount || 0,
+        totalMarks,
+        obtainedMarks,
+      },
     });
 
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 

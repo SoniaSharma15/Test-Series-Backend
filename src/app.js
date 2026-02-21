@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+
 import authRoutes from "./routes/auth.routes.js";
 import adminRoutes from "./routes/admin.routes.js";
 import testSeriesRoutes from "./routes/testSeries.routes.js";
@@ -8,20 +9,33 @@ import questionRoutes from "./routes/question.routes.js";
 import studentRoutes from "./routes/student.routes.js";
 import paymentRoutes from "./routes/payment.routes.js";
 import enrollmentRoutes from "./routes/enrollment.routes.js";
-
 import attemptRoutes from "./routes/attempt.routes.js";
 import adminEnrollmentRoutes from "./routes/adminEnrollmentRoutes.js";
 import userRoutes from "./routes/user.routes.js";
-import resultRoute from "./routes/resultRoutes.js"
-
+import resultRoute from "./routes/resultRoutes.js";
 
 const app = express();
 
+/* ==============================
+   Middlewares
+============================== */
 app.use(cors());
 app.use(express.json());
 
-app.use("/api/auth", authRoutes);
+/* ==============================
+   Health Check API
+============================== */
+app.get("/api/health", (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: "API is running 🚀",
+  });
+});
 
+/* ==============================
+   Routes
+============================== */
+app.use("/api/auth", authRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/test-series", testSeriesRoutes);
 app.use("/api/tests", testRoutes);
@@ -33,4 +47,32 @@ app.use("/api/attempts", attemptRoutes);
 app.use("/api/admin/enrollments", adminEnrollmentRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/results", resultRoute);
+
+/* ==============================
+   404 Handler
+============================== */
+app.use((req, res, next) => {
+  res.status(404).json({
+    success: false,
+    message: `Route not found: ${req.originalUrl}`,
+  });
+});
+
+/* ==============================
+   Global Error Handler
+============================== */
+app.use((err, req, res, next) => {
+  console.error("ERROR:", err);
+
+  const statusCode = err.statusCode || 500;
+
+  res.status(statusCode).json({
+    success: false,
+    message:
+      process.env.NODE_ENV === "production"
+        ? "Something went wrong"
+        : err.message,
+  });
+});
+
 export default app;

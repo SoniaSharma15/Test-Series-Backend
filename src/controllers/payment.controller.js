@@ -1,49 +1,108 @@
+import mongoose from "mongoose";
 import razorpay from "../config/razorpay.js";
 import crypto from "crypto";
 import Payment from "../models/Payment.js";
 import Enrollment from "../models/Enrollment.js";
 import TestSeries from "../models/TestSeries.js";
 import { sendEmail } from "../services/email.service.js";
+import { paymentSuccessTemplate } from "../utils/emailTemplates.js";
 import path from "path";
 import PDFDocument from "pdfkit";
 
-export const getPaymentHistory = async (req, res) => {
+export const getPaymentHistory = async (req, res, next) => {
   try {
-    const studentId = req.user._id;
+    const studentId = req.user?._id;
 
-    const payments = await Payment.find({
-      studentId,
-    })
+    /* ================= AUTH CHECK ================= */
+
+    if (!studentId) {
+      const err = new Error("Unauthorized");
+      err.statusCode = 401;
+      throw err;
+    }
+
+    /* ================= FETCH PAYMENTS ================= */
+
+    const payments = await Payment.find({ studentId })
       .populate("testSeriesId", "title price")
       .sort({ createdAt: -1 });
+
+    if (!payments.length) {
+      return res.status(200).json({
+        success: true,
+        data: [],
+      });
+    }
+
+    /* ================= TRANSFORM RESPONSE ================= */
 
     const result = payments.map((p) => ({
       paymentId: p.paymentId,
       transactionId: p.orderId,
-      amount: p.amount,
+      amount: Number(p.amount) || 0,
       status: p.status,
       date: p.createdAt,
       courseName: p.testSeriesId?.title || "Batch Expired",
-      coursePrice: p.testSeriesId?.price || p.amount,
+      coursePrice:
+        Number(p.testSeriesId?.price) || Number(p.amount) || 0,
     }));
 
-    res.json(result);
+    /* ================= RESPONSE ================= */
+
+    res.status(200).json({
+      success: true,
+      count: result.length,
+      data: result,
+    });
+
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 
 
-export const createOrder = async (req, res) => {
+export const createOrder = async (req, res, next) => {
   try {
     const { testSeriesId } = req.body;
-    const studentId = req.user._id;
+    const studentId = req.user?._id;
+
+    /* ================= AUTH CHECK ================= */
+
+    if (!studentId) {
+      const err = new Error("Unauthorized");
+      err.statusCode = 401;
+      throw err;
+    }
+
+    if (!testSeriesId) {
+      const err = new Error("TestSeriesId is required");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(testSeriesId)) {
+      const err = new Error("Invalid TestSeriesId");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    if (!process.env.RAZORPAY_KEY_ID) {
+      const err = new Error("Payment configuration error");
+      err.statusCode = 500;
+      throw err;
+    }
+
+    /* ================= FETCH TEST SERIES ================= */
 
     const testSeries = await TestSeries.findById(testSeriesId);
 
     if (!testSeries) {
-      return res.status(404).json({ message: "Test series not found" });
+      const err = new Error("Test series not found");
+      err.statusCode = 404;
+      throw err;
     }
+
+    /* ================= DUPLICATE CHECK ================= */
 
     const alreadyEnrolled = await Enrollment.findOne({
       studentId,
@@ -51,48 +110,70 @@ export const createOrder = async (req, res) => {
     });
 
     if (alreadyEnrolled) {
-      return res.status(400).json({
-        message: "Already enrolled in this test series",
-      });
+      const err = new Error("Already enrolled in this test series");
+      err.statusCode = 409;
+      throw err;
     }
+
+    /* ================= OFFER EXPIRY CHECK ================= */
 
     if (
       testSeries.offerExpiry &&
       new Date(testSeries.offerExpiry) < new Date()
     ) {
-      return res.status(400).json({
-        message: "Offer has expired",
-      });
+      const err = new Error("Offer has expired");
+      err.statusCode = 400;
+      throw err;
     }
 
-    // 🔥 GST CALCULATION ADDED HERE
-    const basePrice = testSeries.price;
+    /* ================= PRICE CALCULATION (SERVER SIDE) ================= */
+
+    const basePrice = Number(testSeries.price) || 0;
+
+    if (basePrice <= 0) {
+      const err = new Error("Invalid course price");
+      err.statusCode = 400;
+      throw err;
+    }
+
     const gstAmount = basePrice * 0.18;
-    const totalAmount = Math.round(basePrice + gstAmount); // rounded final amount
+    const totalAmount = Math.round(basePrice + gstAmount);
+
+    /* ================= CREATE RAZORPAY ORDER ================= */
 
     const order = await razorpay.orders.create({
       amount: totalAmount * 100, // convert to paisa
       currency: "INR",
-      receipt: `receipt_${Date.now()}`,
+      receipt: `rcpt_${studentId.toString().slice(-6)}_${Date.now()}`,
     });
 
-    res.json({
-      orderId: order.id,
-      amount: order.amount,
-      key: process.env.RAZORPAY_KEY_ID,
+    /* ================= RESPONSE ================= */
+
+    res.status(200).json({
+      success: true,
+      data: {
+        orderId: order.id,
+        amount: order.amount,
+        currency: order.currency,
+        key: process.env.RAZORPAY_KEY_ID,
+      },
     });
 
   } catch (error) {
-    console.error("CREATE ORDER ERROR:", error);
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 
 
-
-export const verifyPayment = async (req, res) => {
+export const verifyPayment = async (req, res, next) => {
   try {
-    const studentId = req.user._id;
+    const studentId = req.user?._id;
+
+    if (!studentId) {
+      const err = new Error("Unauthorized");
+      err.statusCode = 401;
+      throw err;
+    }
 
     const {
       razorpay_order_id,
@@ -101,30 +182,43 @@ export const verifyPayment = async (req, res) => {
       testSeriesId,
     } = req.body;
 
-    const body =
-      razorpay_order_id + "|" + razorpay_payment_id;
+    if (
+      !razorpay_order_id ||
+      !razorpay_payment_id ||
+      !razorpay_signature ||
+      !testSeriesId
+    ) {
+      const err = new Error("Invalid payment payload");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    /* ================= SIGNATURE VERIFY ================= */
+
+    const body = `${razorpay_order_id}|${razorpay_payment_id}`;
 
     const expectedSignature = crypto
-      .createHmac(
-        "sha256",
-        process.env.RAZORPAY_KEY_SECRET
-      )
+      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
       .update(body)
       .digest("hex");
 
     if (expectedSignature !== razorpay_signature) {
-      return res
-        .status(400)
-        .json({ message: "Payment verification failed" });
+      const err = new Error("Payment verification failed");
+      err.statusCode = 400;
+      throw err;
     }
+
+    /* ================= FETCH TEST SERIES ================= */
 
     const testSeries = await TestSeries.findById(testSeriesId);
 
     if (!testSeries) {
-      return res.status(404).json({
-        message: "Test series not found",
-      });
+      const err = new Error("Test series not found");
+      err.statusCode = 404;
+      throw err;
     }
+
+    /* ================= DUPLICATE CHECK ================= */
 
     const alreadyEnrolled = await Enrollment.findOne({
       studentId,
@@ -132,17 +226,21 @@ export const verifyPayment = async (req, res) => {
     });
 
     if (alreadyEnrolled) {
-      return res.status(400).json({
+      return res.status(200).json({
+        success: true,
         message: "Already enrolled",
       });
     }
 
-    // 🔥 FIXED: Fetch real paid amount from Razorpay
+    /* ================= FETCH ACTUAL PAYMENT ================= */
+
     const razorpayPayment = await razorpay.payments.fetch(
       razorpay_payment_id
     );
 
-    const amount = razorpayPayment.amount / 100; // convert paisa to rupees
+    const amount = razorpayPayment.amount / 100;
+
+    /* ================= SAVE PAYMENT ================= */
 
     await Payment.create({
       studentId,
@@ -153,7 +251,8 @@ export const verifyPayment = async (req, res) => {
       status: "success",
     });
 
-    // 🔥 expiry = today + duration
+    /* ================= CREATE ENROLLMENT ================= */
+
     const expiryDate = new Date();
     expiryDate.setDate(expiryDate.getDate() + testSeries.duration);
 
@@ -164,103 +263,37 @@ export const verifyPayment = async (req, res) => {
       amount,
       status: "active",
       source: "payment",
-      expiryDate, // ✅ IMPORTANT
+      expiryDate,
     });
 
+    await TestSeries.findByIdAndUpdate(testSeriesId, {
+      $inc: { totalEnrollments: 1 },
+    });
 
-    await TestSeries.findByIdAndUpdate(
-      testSeriesId,
-      { $inc: { totalEnrollments: 1 } }
-    );
+    /* ================= SEND EMAIL ================= */
 
-    await sendEmail(
-      req.user.email,
-      "🎉 Enrollment Confirmed - Payment Successful",
-      `
-<!DOCTYPE html>
-<html>
-<body style="margin:0;padding:0;background:#eef2f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
-  
-  <table width="100%" cellpadding="0" cellspacing="0" style="padding:20px 10px;">
-    <tr>
-      <td align="center">
+    try {
+      await sendEmail(
+        req.user.email,
+        "🎉 Enrollment Confirmed - Payment Successful",
+        paymentSuccessTemplate({
+          name: req.user.name,
+          courseTitle: testSeries.title,
+          frontendUrl: process.env.FRONTEND_URL,
+          appName: process.env.APP_NAME,
+        })
+      );
+    } catch (emailError) {
+      console.error("Payment email failed:", emailError.message);
+    }
 
-        <table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,0.05);">
-
-          <!-- Header -->
-          <tr>
-            <td style="background:linear-gradient(135deg,#16a34a,#15803d);padding:25px;text-align:center;color:white;">
-              <h2 style="margin:0;font-weight:600;">Payment Successful ✅</h2>
-            </td>
-          </tr>
-
-          <!-- Body -->
-          <tr>
-            <td style="padding:30px 28px;color:#374151;">
-              
-              <p style="margin-top:0;font-size:15px;">
-                Hi <strong>${req.user.name || "Student"}</strong>,
-              </p>
-
-              <p style="font-size:14px;line-height:1.6;">
-                Congratulations! Your payment has been successfully processed and your enrollment is now active.
-              </p>
-
-              <!-- Highlight Box -->
-              <div style="background:#f0fdf4;border:1px solid #bbf7d0;
-                          padding:14px 16px;border-radius:10px;margin:22px 0;">
-                <div style="font-size:13px;color:#6b7280;">Enrolled Test Series</div>
-                <div style="font-size:15px;font-weight:600;color:#15803d;margin-top:4px;">
-                  ${testSeries.title}
-                </div>
-              </div>
-
-              <p style="font-size:14px;line-height:1.6;">
-                You can now access your test series from your dashboard and start practicing immediately.
-              </p>
-
-              <!-- CTA Button -->
-              <div style="text-align:center;margin:26px 0;">
-                <a href="${process.env.FRONTEND_URL}/student/dashboard"
-                  style="background:#16a34a;color:white;padding:12px 22px;
-                  text-decoration:none;border-radius:8px;font-size:14px;font-weight:600;display:inline-block;">
-                  Go to Dashboard
-                </a>
-              </div>
-
-              <p style="font-size:12px;color:#6b7280;">
-                If you did not make this purchase, please contact our support team immediately.
-              </p>
-
-            </td>
-          </tr>
-
-          <!-- Footer -->
-          <tr>
-            <td style="background:#f9fafb;padding:15px;text-align:center;font-size:12px;color:#9ca3af;">
-              © ${new Date().getFullYear()} ${process.env.APP_NAME || "Exam Portal"}.
-              All rights reserved.
-            </td>
-          </tr>
-
-        </table>
-
-      </td>
-    </tr>
-  </table>
-
-</body>
-</html>
-`
-    );
-
-
-
-    res.json({ message: "Payment successful" });
+    res.status(200).json({
+      success: true,
+      message: "Payment successful",
+    });
 
   } catch (error) {
-    console.error("VERIFY ERROR:", error);
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 

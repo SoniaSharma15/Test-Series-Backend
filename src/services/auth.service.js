@@ -5,163 +5,185 @@ import generateToken from "../utils/generateToken.js";
 import { sendEmail } from "./email.service.js";
 import {
   registrationTemplate,
-  resetPasswordTemplate
+  resetPasswordTemplate,
 } from "../utils/emailTemplates.js";
 
-
+/* =====================================================
+   REGISTER
+===================================================== */
 export const registerService = async (data) => {
   let { name, email, password, mobile } = data;
 
   if (!name || !email || !password || !mobile) {
-    throw new Error("All fields are required");
+    const err = new Error("All fields are required");
+    err.statusCode = 400;
+    throw err;
   }
 
-  // Normalize inputs
   name = name.trim();
   email = email.trim().toLowerCase();
   mobile = mobile.trim();
 
-  // Validate mobile (Indian 10-digit format)
+  // Basic password validation
+  if (password.length < 6) {
+    const err = new Error("Password must be at least 6 characters");
+    err.statusCode = 400;
+    throw err;
+  }
+
   const mobileRegex = /^[6-9]\d{9}$/;
   if (!mobileRegex.test(mobile)) {
-    throw new Error("Invalid mobile number");
+    const err = new Error("Invalid mobile number");
+    err.statusCode = 400;
+    throw err;
   }
 
-  // Check existing email
-  const existingEmail = await User.findOne({ email });
-  if (existingEmail) {
-    throw new Error("Email already registered");
+  const existingUser = await User.findOne({
+    $or: [{ email }, { mobile }],
+  });
+
+  if (existingUser) {
+    const err = new Error("Email or Mobile already registered");
+    err.statusCode = 409;
+    throw err;
   }
 
-  // Check existing mobile
-  const existingMobile = await User.findOne({ mobile });
-  if (existingMobile) {
-    throw new Error("Mobile number already registered");
-  }
-
-  // Hash password
   const hashedPassword = await bcrypt.hash(password, 12);
 
-  // Create user
   const user = await User.create({
     name,
     email,
     mobile,
     password: hashedPassword,
-    mobile
   });
 
-  // Generate JWT
   const token = generateToken(user._id);
 
-  // Send welcome email (non-blocking)
+  // Non-blocking email
   sendEmail(
     user.email,
     "🎉 Welcome to Brilliant Test Series",
     registrationTemplate(user.name)
   ).catch((err) => console.error("Email failed:", err.message));
 
-  // Remove password before returning
   const safeUser = user.toObject();
   delete safeUser.password;
 
   return { user: safeUser, token };
 };
 
-
-
+/* =====================================================
+   LOGIN
+===================================================== */
 export const loginService = async (data) => {
-  const { email, password } = data;
+  let { email, password } = data;
+
+  if (!email || !password) {
+    const err = new Error("Email and password are required");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  email = email.trim().toLowerCase();
 
   const user = await User.findOne({ email });
-  if (!user) throw new Error("Invalid credentials");
 
-  if (user.isBlocked) throw new Error("User is blocked");
+  if (!user || user.isBlocked) {
+    const err = new Error("Invalid credentials");
+    err.statusCode = 401;
+    throw err;
+  }
 
   const isMatch = await bcrypt.compare(password, user.password);
-  if (!isMatch) throw new Error("Invalid credentials");
+  if (!isMatch) {
+    const err = new Error("Invalid credentials");
+    err.statusCode = 401;
+    throw err;
+  }
 
   const token = generateToken(user._id);
 
-  return { user, token };
+  const safeUser = user.toObject();
+  delete safeUser.password;
+
+  return { user: safeUser, token };
 };
 
-
+/* =====================================================
+   FORGOT PASSWORD
+===================================================== */
 export const forgotPasswordService = async (email) => {
-  try {
-    const normalizedEmail = email.trim().toLowerCase();
+  const normalizedEmail = email?.trim().toLowerCase();
 
-    const user = await User.findOne({ email: normalizedEmail });
+  if (!normalizedEmail) return true;
 
-    // 🔐 Always return true (prevent email enumeration attack)
-    if (!user) return true;
+  const user = await User.findOne({ email: normalizedEmail });
 
-    // Generate raw token
-    const resetToken = crypto.randomBytes(32).toString("hex");
+  // Prevent email enumeration
+  if (!user) return true;
 
-    // Hash token before saving in DB (VERY IMPORTANT)
-    const hashedToken = crypto
-      .createHash("sha256")
-      .update(resetToken)
-      .digest("hex");
+  const resetToken = crypto.randomBytes(32).toString("hex");
 
-    await User.findByIdAndUpdate(user._id, {
-      resetPasswordToken: hashedToken,
-      resetPasswordExpiry: Date.now() + 15 * 60 * 1000,
-    });
+  const hashedToken = crypto
+    .createHash("sha256")
+    .update(resetToken)
+    .digest("hex");
 
+  await User.findByIdAndUpdate(user._id, {
+    resetPasswordToken: hashedToken,
+    resetPasswordExpiry: Date.now() + 15 * 60 * 1000,
+  });
 
-    const frontendUrl = process.env.FRONTEND_URL;
-
-    if (!frontendUrl) {
-      throw new Error("FRONTEND_URL is not defined in .env");
-    }
-
-    const resetLink = `${frontendUrl}/reset-password/${resetToken}`;
-
-    await sendEmail(
-      user.email,
-      "🔐 Reset Your Password - Brilliant Test Series",
-      resetPasswordTemplate(user.name, resetLink)
-    );
-
-    return true;
-  } catch (error) {
-    console.error("Forgot Password Error:", error.message);
-    throw new Error("Failed to process forgot password request");
+  const frontendUrl = process.env.FRONTEND_URL;
+  if (!frontendUrl) {
+    console.error("FRONTEND_URL missing in env");
+    return true; // don't expose internal issue
   }
+
+  const resetLink = `${frontendUrl}/reset-password/${resetToken}`;
+
+  await sendEmail(
+    user.email,
+    "🔐 Reset Your Password - Brilliant Test Series",
+    resetPasswordTemplate(user.name, resetLink)
+  );
+
+  return true;
 };
 
-
+/* =====================================================
+   RESET PASSWORD
+===================================================== */
 export const resetPasswordService = async (token, newPassword) => {
-  try {
-    // 🔐 Hash incoming token before searching
-    const hashedToken = crypto
-      .createHash("sha256")
-      .update(token)
-      .digest("hex");
-
-    const user = await User.findOne({
-      resetPasswordToken: hashedToken,
-      resetPasswordExpiry: { $gt: Date.now() },
-    });
-
-    if (!user) {
-      throw new Error("Invalid or expired token");
-    }
-
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-
-    // ✅ Use findByIdAndUpdate (avoid validation issue)
-    await User.findByIdAndUpdate(user._id, {
-      password: hashedPassword,
-      resetPasswordToken: null,
-      resetPasswordExpiry: null,
-    });
-
-    return true;
-  } catch (error) {
-    console.error("Reset Password Error:", error.message);
-    throw new Error("Failed to reset password");
+  if (!token || !newPassword || newPassword.length < 6) {
+    const err = new Error("Invalid request");
+    err.statusCode = 400;
+    throw err;
   }
+
+  const hashedToken = crypto
+    .createHash("sha256")
+    .update(token)
+    .digest("hex");
+
+  const user = await User.findOne({
+    resetPasswordToken: hashedToken,
+    resetPasswordExpiry: { $gt: Date.now() },
+  });
+
+  if (!user) {
+    const err = new Error("Invalid or expired token");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const hashedPassword = await bcrypt.hash(newPassword, 12);
+
+  user.password = hashedPassword;
+  user.resetPasswordToken = null;
+  user.resetPasswordExpiry = null;
+
+  await user.save();
+
+  return true;
 };

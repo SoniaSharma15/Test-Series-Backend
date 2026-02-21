@@ -6,6 +6,10 @@ let transporter;
 const getTransporter = () => {
   if (transporter) return transporter;
 
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+    throw new Error("Email credentials are not configured properly");
+  }
+
   transporter = nodemailer.createTransport({
     service: "gmail",
     auth: {
@@ -24,6 +28,20 @@ export const sendEmail = async (
   htmlContent,
   textFallback = ""
 ) => {
+  if (!to || !subject || !htmlContent) {
+    const err = new Error("Invalid email parameters");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // Basic email format validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(to)) {
+    const err = new Error("Invalid recipient email");
+    err.statusCode = 400;
+    throw err;
+  }
+
   try {
     const mailTransporter = getTransporter();
 
@@ -31,17 +49,20 @@ export const sendEmail = async (
       from: `"Brilliant Test Series" <${process.env.EMAIL_USER}>`,
       to,
       subject,
-      html: htmlContent,      // ✅ HTML Support
-      text: textFallback || "Please view this email in HTML supported client.",
+      html: htmlContent,
+      text:
+        textFallback ||
+        "Please view this email in an HTML supported email client.",
     };
 
-    const info = await mailTransporter.sendMail(mailOptions);
-
- 
+    await mailTransporter.sendMail(mailOptions);
 
     return true;
   } catch (error) {
     console.error("❌ Email sending failed:", error.message);
-    throw new Error("Email could not be sent");
+
+    const err = new Error("Email could not be sent");
+    err.statusCode = 500;
+    throw err;
   }
 };
