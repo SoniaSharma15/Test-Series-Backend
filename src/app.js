@@ -19,7 +19,23 @@ const app = express();
 /* ==============================
    Middlewares
 ============================== */
-app.use(cors());
+const allowedOrigin = process.env.FRONTEND_URL;
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // allow requests with no origin (like Postman / mobile apps)
+      if (!origin) return callback(null, true);
+
+      if (origin === allowedOrigin) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true, // if using cookies
+  })
+);
 app.use(express.json());
 
 /* ==============================
