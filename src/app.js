@@ -26,6 +26,8 @@ const app = express();
 const allowedOrigins = [
   "https://testseries.thebrilliantbihar.com",
   "https://www.testseries.thebrilliantbihar.com",
+   "https://thebrilliantbihar.com",
+   "https://www.thebrilliantbihar.com",
 
   // Optional (for development)
   "http://localhost:3000",
