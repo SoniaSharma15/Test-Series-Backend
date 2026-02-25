@@ -2,7 +2,7 @@ import nodemailer from "nodemailer";
 
 let transporter;
 
-/* ================= CREATE TRANSPORTER ONCE ================= */
+/* ================= CREATE TRANSPORTER (Singleton) ================= */
 const getTransporter = () => {
   if (transporter) return transporter;
 
@@ -11,17 +11,22 @@ const getTransporter = () => {
   }
 
   transporter = nodemailer.createTransport({
-    service: "gmail",
+    host: "smtp.gmail.com",   // ✅ Direct SMTP (reliable)
+    port: 465,                // ✅ SSL Port
+    secure: true,             // ✅ MUST true with port 465
     auth: {
       user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
+      pass: process.env.EMAIL_PASS, // ✅ App Password (NOT Gmail password)
+    },
+    tls: {
+      rejectUnauthorized: false,
     },
   });
 
   return transporter;
 };
 
-/* ================= SEND EMAIL ================= */
+/* ================= SEND EMAIL FUNCTION ================= */
 export const sendEmail = async (
   to,
   subject,
@@ -34,7 +39,7 @@ export const sendEmail = async (
     throw err;
   }
 
-  // Basic email format validation
+  // Basic email validation
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(to)) {
     const err = new Error("Invalid recipient email");
@@ -45,21 +50,20 @@ export const sendEmail = async (
   try {
     const mailTransporter = getTransporter();
 
-    const mailOptions = {
+    await mailTransporter.sendMail({
       from: `"Brilliant Test Series" <${process.env.EMAIL_USER}>`,
       to,
       subject,
       html: htmlContent,
       text:
         textFallback ||
-        "Please view this email in an HTML supported email client.",
-    };
+        "Please open this email in an HTML supported email client.",
+    });
 
-    await mailTransporter.sendMail(mailOptions);
-
+    console.log("✅ Email sent successfully");
     return true;
   } catch (error) {
-    console.error("❌ Email sending failed:", error.message);
+    console.error("❌ Email sending failed:", error);
 
     const err = new Error("Email could not be sent");
     err.statusCode = 500;
