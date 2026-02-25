@@ -561,9 +561,10 @@ export const downloadReceipt = async (req, res) => {
     if (!payment) return res.status(404).json({ message: "Receipt not found" });
     if (!payment.testSeriesId) return res.status(410).json({ message: "Test series no longer available" });
 
-    const totalPaid = payment.amount;
-    const basePrice = (totalPaid / 1.18).toFixed(2);
-    const gstAmount = (totalPaid - basePrice).toFixed(2);
+    const totalPaid = Math.round(payment.amount);
+    const basePrice = Math.round(totalPaid / 1.18);
+    const gstAmount = totalPaid - basePrice;
+
     const invoiceNumber = `TBB/ACAD/${new Date().getFullYear()}/${payment.paymentId.slice(-6).toUpperCase()}`;
 
     const doc = new PDFDocument({ size: "A4", margin: 0 });
@@ -580,52 +581,57 @@ export const downloadReceipt = async (req, res) => {
     const BORDER_COLOR = "#cbd5e1";
     const BG_SOFT = "#f8fafc";
 
-    // 1. TOP BAR (GOVT STYLE)
-    doc.rect(0, 0, doc.page.width, 40).fill(GOVT_BLUE);
-    doc.fillColor("#ffffff").fontSize(8).font("Helvetica-Bold").text("DIGITAL REVENUE RECEIPT - GOVERNMENT OF BIHAR CURRICULUM ALIGNED", 0, 15, { align: "center" });
-
     // 2. MAIN HEADER
     const logoPath = path.join(process.cwd(), "src", "assets", "loader.png");
     try {
-        doc.image(logoPath, 50, 60, { width: 60 });
+      doc.image(logoPath, 50, 60, { width: 60 });
     } catch (e) {}
 
     doc.fillColor(DEEP_NAVY).fontSize(22).font("Helvetica-Bold").text("THE BRILLIANT BIHAR", 130, 65);
-    doc.fontSize(9).font("Helvetica").fillColor(TEXT_LIGHT).text("Recognized Academic Excellence Portal for Civil Services", 130, 90);
+    doc.fontSize(9).font("Helvetica").fillColor(TEXT_LIGHT).text("An Institute for UPSC, BPSC & other PCS Exams", 130, 90);
     doc.fontSize(8).text("Regd Office: Patna, Bihar | Contact: support@thebrilliantbihar.com", 130, 102);
 
     // 3. INVOICE TYPE BADGE
     doc.rect(430, 65, 120, 20).fill("#f1f5f9");
-    doc.fillColor(GOVT_BLUE).fontSize(8).font("Helvetica-Bold").text("ORIGINAL FOR RECIPIENT", 435, 71, { width: 110, align: "center" });
+    doc.fillColor(GOVT_BLUE).fontSize(8).font("Helvetica-Bold").text("Digial Receipt", 435, 71, { width: 110, align: "center" });
 
-    // 4. METADATA GRID (Govt style box)
+    // 4. METADATA GRID
     doc.rect(50, 130, 500, 45).strokeColor(BORDER_COLOR).lineWidth(1).stroke();
-    doc.moveTo(300, 130).lineTo(300, 175).stroke(); // Vertical divider
+    doc.moveTo(300, 130).lineTo(300, 175).stroke();
 
-    // Labels
     doc.fillColor(TEXT_LIGHT).fontSize(7).font("Helvetica-Bold");
     doc.text("RECEIPT / INVOICE NUMBER", 60, 140);
     doc.text("DATE OF ISSUE", 310, 140);
 
-    // Values
     doc.fillColor(TEXT_MAIN).fontSize(10).text(invoiceNumber, 60, 155);
     doc.text(new Date(payment.createdAt).toLocaleString("en-IN"), 310, 155);
 
-    // 5. BILLING SECTION
-    doc.rect(50, 190, 500, 80).fill(BG_SOFT);
-    doc.fillColor(GOVT_BLUE).fontSize(9).font("Helvetica-Bold").text("CANDIDATE DETAILS", 70, 205);
-    
-    doc.fillColor(TEXT_MAIN).fontSize(11).text(req.user.name.toUpperCase(), 70, 222);
-    doc.fillColor(TEXT_LIGHT).fontSize(9).font("Helvetica").text(`Email: ${req.user.email}`, 70, 237);
-    doc.text(`Transaction ID: ${payment.paymentId}`, 70, 250);
+   // 5. BILLING SECTION — FIXED ALIGNMENT
 
-    // Placeholder for QR Code (QR codes are very common in real receipts)
-    doc.rect(460, 195, 70, 70).strokeColor(BORDER_COLOR).stroke();
-    doc.fontSize(6).text("SCAN TO VERIFY", 460, 270, { width: 70, align: "center" });
+doc.rect(50, 190, 500, 110).fill(BG_SOFT); // ⬅ increased height
+
+doc.fillColor(GOVT_BLUE)
+  .fontSize(9)
+  .font("Helvetica-Bold")
+  .text("CANDIDATE DETAILS", 70, 205);
+
+doc.fillColor(TEXT_MAIN)
+  .fontSize(11)
+  .font("Helvetica")
+  .text(req.user.name.toUpperCase(), 70, 225);
+
+doc.fillColor(TEXT_LIGHT)
+  .fontSize(9)
+  .font("Helvetica")
+  .text(`Email: ${req.user.email}`, 70, 242);
+
+doc.text(`Mobile: ${req.user.mobile}`, 70, 257);
+
+doc.text(`Transaction ID: ${payment.paymentId}`, 70, 272);
 
     // 6. WATERMARK
     try {
-      doc.save().opacity(0.08);
+      doc.save().opacity(0.06);
       doc.image(logoPath, (doc.page.width - 400) / 2, (doc.page.height - 400) / 2, { width: 400 });
       doc.restore();
     } catch (err) {}
@@ -636,59 +642,63 @@ export const downloadReceipt = async (req, res) => {
     doc.fillColor("#ffffff").fontSize(9).font("Helvetica-Bold");
     doc.text("SR NO.", 60, tableTop + 8);
     doc.text("DESCRIPTION OF SERVICE", 110, tableTop + 8);
-    doc.text("SAC CODE", 350, tableTop + 8);
-    doc.text("AMOUNT (INR)", 450, tableTop + 8, { align: "right", width: 90 });
+    doc.text("AMOUNT", 450, tableTop + 8, { align: "right", width: 90 });
 
-    // Item Row
     doc.fillColor(TEXT_MAIN).fontSize(10).font("Helvetica");
     doc.text("01.", 60, tableTop + 40);
     doc.font("Helvetica-Bold").text(payment.testSeriesId.title, 110, tableTop + 40);
-    doc.font("Helvetica").fontSize(8).text("E-Learning Test Series (UPSC/BPSC Specialized)", 110, tableTop + 55, { width: 200 });
-    doc.fontSize(10).text("9984", 350, tableTop + 40); // SAC Code for Education
-    doc.text(basePrice, 450, tableTop + 40, { align: "right", width: 90 });
+    doc.font("Helvetica").fontSize(8).text("E-Learning Test Series (UPSC/BPSC Specialized)", 110, tableTop + 55, { width: 220 });
+    doc.text(`Rs. ${basePrice}`, 450, tableTop + 40, { align: "right", width: 90 });
 
     // 8. FINANCIAL SUMMARY
-    const summaryY = 450;
+    const summaryY = 460;
     doc.lineCap('butt').moveTo(320, summaryY).lineTo(550, summaryY).stroke(BORDER_COLOR);
 
     const drawRow = (label, value, y, isBold = false) => {
-      doc.fillColor(isBold ? DEEP_NAVY : TEXT_LIGHT).fontSize(isBold ? 11 : 9).font(isBold ? "Helvetica-Bold" : "Helvetica");
+      doc.fillColor(isBold ? DEEP_NAVY : TEXT_LIGHT)
+        .fontSize(isBold ? 11 : 9)
+        .font(isBold ? "Helvetica-Bold" : "Helvetica");
       doc.text(label, 320, y);
-      doc.text(value, 450, y, { align: "right", width: 90 });
+      doc.text(`Rs. ${value}`, 450, y, { align: "right", width: 90 });
     };
 
     drawRow("Taxable Value", basePrice, summaryY + 15);
-    drawRow("CGST (9%)", (gstAmount / 2).toFixed(2), summaryY + 35);
-    drawRow("SGST (9%)", (gstAmount / 2).toFixed(2), summaryY + 55);
-    
+    drawRow("CGST (9%)", Math.round(gstAmount / 2), summaryY + 35);
+    drawRow("SGST (9%)", Math.round(gstAmount / 2), summaryY + 55);
+
     doc.rect(320, summaryY + 75, 230, 30).fill(GOVT_BLUE);
     doc.fillColor("#ffffff").fontSize(12).font("Helvetica-Bold").text("Total Paid", 330, summaryY + 85);
-    doc.text(`₹ ${totalPaid}`, 450, summaryY + 85, { align: "right", width: 90 });
+    doc.text(`Rs. ${totalPaid}`, 450, summaryY + 85, { align: "right", width: 90 });
 
     // 9. SIGNATURE SECTION
     const sigY = 620;
-    doc.fillColor(TEXT_MAIN).fontSize(8).font("Helvetica-Bold").text("Digitally Signed By:", 380, sigY);
-    doc.fontSize(10).text("The Brilliant Bihar", 380, sigY + 15);
-    doc.fontSize(7).font("Helvetica").fillColor(TEXT_LIGHT).text("Authorized Signatory", 380, sigY + 28);
-    
-    // Virtual Stamp
-    doc.save().opacity(0.7).circle(450, sigY + 20, 35).lineWidth(2).strokeColor(GOVT_BLUE).stroke();
-    doc.fontSize(6).fillColor(GOVT_BLUE).text("VERIFIED ACADEMIC", 420, sigY + 15, { width: 60, align: "center" });
+    doc.fillColor(TEXT_MAIN).fontSize(8).font("Helvetica-Bold").text("Digitally Signed By:", 460, sigY);
+    doc.fontSize(9).text("The Brilliant Bihar", 460, sigY + 15);
+    doc.fontSize(7).font("Helvetica").fillColor(TEXT_LIGHT).text("Authorized Signatory", 460, sigY + 28);
 
-    // 10. TERMS & CONDITIONS (Small print like real receipts)
-    doc.rect(50, 700, 500, 60).strokeColor(BORDER_COLOR).stroke();
-    doc.fillColor(TEXT_MAIN).fontSize(7).font("Helvetica-Bold").text("TERMS & DISCLAIMERS:", 60, 710);
-    doc.font("Helvetica").fillColor(TEXT_LIGHT).text("1. This is a computer-generated receipt and does not require a physical signature.", 60, 722);
-    doc.text("2. Fees once paid are non-refundable and non-transferable under any circumstances.", 60, 732);
-    doc.text("3. This receipt is valid only subject to successful realization of payment from the gateway.", 60, 742);
+    // 10. TERMS & CONDITIONS
+    doc.rect(50, 710, 500, 60).strokeColor(BORDER_COLOR).stroke();
+    doc.fillColor(TEXT_MAIN).fontSize(7).font("Helvetica-Bold").text("TERMS & DISCLAIMERS:", 60, 720);
+    doc.font("Helvetica").fillColor(TEXT_LIGHT).text("1. This is a computer-generated receipt and does not require a physical signature.", 60, 732);
+    doc.text("2. Fees once paid are non-refundable and non-transferable under any circumstances.", 60, 742);
+    doc.text("3. This receipt is valid only subject to successful realization of payment from the gateway.", 60, 752);
 
-    // 11. FOOTER
-    doc.fontSize(8).fillColor(TEXT_LIGHT).text("System-generated Invoice | IP: " + (req.ip || "127.0.0.1") + " | Time: " + new Date().toISOString(), 0, 790, { align: "center" });
+    const footerTime = new Date().toLocaleString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    });
+
+    doc.fontSize(8).fillColor(TEXT_LIGHT)
+      .text("System-generated Invoice | Time: " + footerTime, 0, 790, { align: "center" });
 
     doc.end();
 
   } catch (error) {
-    console.error("Receipt Enhancement Error:", error);
+    console.error("Receipt Alignment Error:", error);
     if (!res.headersSent) res.status(500).json({ message: "Invoice generation failed" });
   }
 };
