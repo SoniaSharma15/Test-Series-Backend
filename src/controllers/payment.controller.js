@@ -298,6 +298,256 @@ export const verifyPayment = async (req, res, next) => {
 };
 
 
+// export const downloadReceipt = async (req, res) => {
+//   try {
+//     const studentId = req.user._id;
+//     const { paymentId } = req.params;
+
+//     const payment = await Payment.findOne({
+//       paymentId,
+//       studentId,
+//     }).populate("testSeriesId");
+
+//     if (!payment) {
+//       return res.status(404).json({ message: "Receipt not found" });
+//     }
+//     if (!payment.testSeriesId) {
+//       return res.status(410).json({
+//         message: "Test series no longer available"
+//       });
+//     }
+
+//     const totalPaid = payment.amount;
+//     const basePrice = (totalPaid / 1.18).toFixed(2);
+//     const gstAmount = (totalPaid - basePrice).toFixed(2);
+//     const invoiceNumber = `INV-${payment.paymentId.slice(-6).toUpperCase()}`;
+
+//     const doc = new PDFDocument({
+//       size: "A4",
+//       margin: 0,
+//     });
+
+//     res.setHeader("Content-Disposition", `attachment; filename=invoice-${payment.paymentId}.pdf`);
+//     res.setHeader("Content-Type", "application/pdf");
+
+//     doc.pipe(res);
+
+//     // ================= COLORS & BRANDING =================
+//     const DEEP_NAVY = "#0f172a";
+//     const ACCENT_BLUE = "#3b82f6";
+//     const SUCCESS_GREEN = "#10b981";
+//     const TEXT_LIGHT = "#64748b";
+//     const BG_SOFT = "#f8fafc";
+
+
+
+//     // Header Background
+//     doc.rect(0, 0, doc.page.width, 160).fill(DEEP_NAVY);
+
+//     // Brand Title
+//     doc
+//       .fillColor("#ffffff")
+//       .fontSize(28)
+//       .font("Helvetica-Bold")
+//       .text("The Brilliant Bihar", 50, 50);
+
+//     doc
+//       .fontSize(10)
+//       .font("Helvetica")
+//       .fillColor(ACCENT_BLUE)
+//       .text("Official Academic Transaction Receipt", 50, 85, { characterSpacing: 1 });
+
+//     // ================= STATUS ICON (loader.png) =================
+//     const statusIconPath = path.join(process.cwd(), "src", "assets", "loader.png");
+//     // image size (circle ke approx barabar)
+//     const iconSize = 55;
+
+//     // exact wahi jagah jahan green circle tha
+//     const iconX = 520 - iconSize / 2;
+//     const iconY = 70 - iconSize / 2;
+
+//     try {
+//       doc.save();
+//       doc.opacity(0.99); // clear & visible
+//       doc.image(statusIconPath, iconX, iconY, {
+//         width: iconSize,
+//         height: iconSize,
+//       });
+//       doc.restore();
+//     } catch (e) {
+
+//     }
+
+
+//     // ================= DESCRIPTIVE INFO PANEL =================
+//     doc.rect(50, 180, 500, 100).fill(BG_SOFT);
+
+//     // LEFT: Billing To
+//     doc
+//       .fillColor(TEXT_LIGHT)
+//       .fontSize(8)
+//       .font("Helvetica-Bold")
+//       .text("STUDENT DETAILS", 70, 200);
+
+//     doc
+//       .fillColor(DEEP_NAVY)
+//       .fontSize(12)
+//       .font("Helvetica-Bold")
+//       .text(req.user.name.toUpperCase(), 70, 215)
+//       .fontSize(10)
+//       .font("Helvetica")
+//       .text(req.user.email, 70, 230);
+
+//     // RIGHT: Invoice Meta
+//     doc
+//       .fillColor(TEXT_LIGHT)
+//       .fontSize(8)
+//       .font("Helvetica-Bold")
+//       .text("INVOICE SUMMARY", 350, 200);
+
+//     doc
+//       .fillColor(DEEP_NAVY)
+//       .fontSize(10)
+//       .font("Helvetica")
+//       .text(`Invoice Number: ${invoiceNumber}`, 350, 215)
+//       .text(`Date: ${new Date(payment.createdAt).toLocaleDateString("en-IN")}`, 350, 230)
+//       .text(`Order ID: ${payment.orderId}`, 350, 245);
+//     // ================= PAGE WATERMARK =================
+//     const watermarkPath = path.join(process.cwd(), "src", "assets", "loader.png");
+
+//     try {
+//       const pageWidth = doc.page.width;
+//       const pageHeight = doc.page.height;
+
+//       doc.save();
+
+//       // 👇 very light opacity (perfect watermark)
+//       doc.opacity(0.2);
+
+//       // 👇 center me large watermark
+//       const wmSize = 420;
+//       doc.image(
+//         watermarkPath,
+//         (pageWidth - wmSize) / 2,
+//         (pageHeight - wmSize) / 2,
+//         {
+//           width: wmSize,
+//           height: wmSize,
+//         }
+//       );
+
+//       doc.restore();
+//     } catch (err) {
+
+//     }
+//     // ================= PRODUCT DESCRIPTION SECTION =================
+//     doc.moveDown(8);
+
+//     doc
+//       .fillColor(DEEP_NAVY)
+//       .fontSize(11)
+//       .font("Helvetica-Bold")
+//       .text("ENROLLED SERVICE DESCRIPTION", 50, doc.y);
+
+//     doc.rect(50, doc.y + 5, 500, 2).fill(ACCENT_BLUE);
+
+//     const tableTop = doc.y + 20;
+
+//     // Item Header
+//     doc
+//       .fillColor(TEXT_LIGHT)
+//       .fontSize(9)
+//       .font("Helvetica-Bold")
+//       .text("PARTICULARS", 50, tableTop)
+//       .text("AMOUNT (INR)", 450, tableTop, { align: "right", width: 100 });
+
+//     // Item Content
+//     doc
+//       .fillColor(DEEP_NAVY)
+//       .fontSize(13)
+//       .font("Helvetica-Bold")
+//       .text(payment.testSeriesId.title, 50, tableTop + 25);
+
+//     doc
+//       .fillColor(TEXT_LIGHT)
+//       .fontSize(9)
+//       .font("Helvetica")
+//       .text("Full Access to Test Modules, Performance Analytics, and Detailed Solutions.", 50, tableTop + 45);
+
+//     doc
+//       .fillColor(DEEP_NAVY)
+//       .fontSize(12)
+//       .text(basePrice, 450, tableTop + 25, { align: "right", width: 100 });
+
+//     // ================= FINANCIAL BREAKDOWN =================
+//     const summaryY = tableTop + 100;
+
+//     doc
+//       .save()
+//       .lineWidth(0.7)                 // thinner border
+//       .strokeColor("#000000")
+//       .rect(320, summaryY, 230, 120)
+//       .stroke()
+//       .restore();
+
+//     const drawRow = (label, value, y, isBold = false) => {
+//       doc
+//         .fillColor(isBold ? DEEP_NAVY : TEXT_LIGHT)
+//         .fontSize(isBold ? 12 : 10)
+//         .font(isBold ? "Helvetica-Bold" : "Helvetica")
+//         .text(label, 340, y)
+//         .text(value, 450, y, { align: "right", width: 90 });
+//     };
+
+//     drawRow("Sub-Total", basePrice, summaryY + 20);
+//     drawRow("Tax (GST 18%)", gstAmount, summaryY + 45);
+
+//     doc
+//       .save()
+//       .opacity(0.6)
+//       .rect(340, summaryY + 70, 200, 0.8)
+//       .fill("#000000")
+//       .restore();
+//     drawRow("Total Amount", totalPaid, summaryY + 85, true);
+
+//     // ================= SECURE VERIFICATION =================
+//     const footerTop = 650;
+
+//     doc.rect(50, footerTop, 200, 80).fill(BG_SOFT);
+
+//     doc
+//       .fillColor(SUCCESS_GREEN)
+//       .fontSize(8)
+//       .font("Helvetica-Bold")
+//       .text("✓ PAYMENT VERIFIED SECURE", 70, footerTop + 20);
+
+//     doc
+//       .fillColor(DEEP_NAVY)
+//       .fontSize(7)
+//       .font("Helvetica")
+//       .text("Transaction completed via encrypted gateway.", 70, footerTop + 35)
+//       .text(`Gateway Ref: ${payment.paymentId}`, 70, footerTop + 45);
+
+//     // ================= FOOTER =================
+//     doc
+//       .fillColor(TEXT_LIGHT)
+//       .fontSize(8)
+//       .text("The Brilliant Bihar - Empowering Future Success", 0, 780, { align: "center", width: doc.page.width })
+//       .text("This is a digitally signed document. No physical signature required. Currency: INR", 0, 792, { align: "center", width: doc.page.width });
+
+//     doc.end();
+
+//   } catch (error) {
+//     console.error("PDF Generation Error:", error);
+
+//     if (!res.headersSent) {
+//       return res.status(500).json({
+//         message: "Invoice generation failed"
+//       });
+//     }
+//   }
+// };
+
 export const downloadReceipt = async (req, res) => {
   try {
     const studentId = req.user._id;
@@ -308,243 +558,138 @@ export const downloadReceipt = async (req, res) => {
       studentId,
     }).populate("testSeriesId");
 
-    if (!payment) {
-      return res.status(404).json({ message: "Receipt not found" });
-    }
-    if (!payment.testSeriesId) {
-      return res.status(410).json({
-        message: "Test series no longer available"
-      });
-    }
+    if (!payment) return res.status(404).json({ message: "Receipt not found" });
+    if (!payment.testSeriesId) return res.status(410).json({ message: "Test series no longer available" });
 
     const totalPaid = payment.amount;
     const basePrice = (totalPaid / 1.18).toFixed(2);
     const gstAmount = (totalPaid - basePrice).toFixed(2);
-    const invoiceNumber = `INV-${payment.paymentId.slice(-6).toUpperCase()}`;
+    const invoiceNumber = `TBB/ACAD/${new Date().getFullYear()}/${payment.paymentId.slice(-6).toUpperCase()}`;
 
-    const doc = new PDFDocument({
-      size: "A4",
-      margin: 0,
-    });
+    const doc = new PDFDocument({ size: "A4", margin: 0 });
 
-    res.setHeader("Content-Disposition", `attachment; filename=invoice-${payment.paymentId}.pdf`);
+    res.setHeader("Content-Disposition", `attachment; filename=Receipt-${payment.paymentId}.pdf`);
     res.setHeader("Content-Type", "application/pdf");
-
     doc.pipe(res);
 
-    // ================= COLORS & BRANDING =================
+    // ================= COLORS =================
     const DEEP_NAVY = "#0f172a";
-    const ACCENT_BLUE = "#3b82f6";
-    const SUCCESS_GREEN = "#10b981";
+    const GOVT_BLUE = "#1e40af";
+    const TEXT_MAIN = "#1e293b";
     const TEXT_LIGHT = "#64748b";
+    const BORDER_COLOR = "#cbd5e1";
     const BG_SOFT = "#f8fafc";
 
+    // 1. TOP BAR (GOVT STYLE)
+    doc.rect(0, 0, doc.page.width, 40).fill(GOVT_BLUE);
+    doc.fillColor("#ffffff").fontSize(8).font("Helvetica-Bold").text("DIGITAL REVENUE RECEIPT - GOVERNMENT OF BIHAR CURRICULUM ALIGNED", 0, 15, { align: "center" });
 
-
-    // Header Background
-    doc.rect(0, 0, doc.page.width, 160).fill(DEEP_NAVY);
-
-    // Brand Title
-    doc
-      .fillColor("#ffffff")
-      .fontSize(28)
-      .font("Helvetica-Bold")
-      .text("The Brilliant Bihar", 50, 50);
-
-    doc
-      .fontSize(10)
-      .font("Helvetica")
-      .fillColor(ACCENT_BLUE)
-      .text("Official Academic Transaction Receipt", 50, 85, { characterSpacing: 1 });
-
-    // ================= STATUS ICON (loader.png) =================
-    const statusIconPath = path.join(process.cwd(), "src", "assets", "loader.png");
-    // image size (circle ke approx barabar)
-    const iconSize = 55;
-
-    // exact wahi jagah jahan green circle tha
-    const iconX = 520 - iconSize / 2;
-    const iconY = 70 - iconSize / 2;
-
+    // 2. MAIN HEADER
+    const logoPath = path.join(process.cwd(), "src", "assets", "loader.png");
     try {
-      doc.save();
-      doc.opacity(0.99); // clear & visible
-      doc.image(statusIconPath, iconX, iconY, {
-        width: iconSize,
-        height: iconSize,
-      });
-      doc.restore();
-    } catch (e) {
+        doc.image(logoPath, 50, 60, { width: 60 });
+    } catch (e) {}
 
-    }
+    doc.fillColor(DEEP_NAVY).fontSize(22).font("Helvetica-Bold").text("THE BRILLIANT BIHAR", 130, 65);
+    doc.fontSize(9).font("Helvetica").fillColor(TEXT_LIGHT).text("Recognized Academic Excellence Portal for Civil Services", 130, 90);
+    doc.fontSize(8).text("Regd Office: Patna, Bihar | Contact: support@thebrilliantbihar.com", 130, 102);
 
+    // 3. INVOICE TYPE BADGE
+    doc.rect(430, 65, 120, 20).fill("#f1f5f9");
+    doc.fillColor(GOVT_BLUE).fontSize(8).font("Helvetica-Bold").text("ORIGINAL FOR RECIPIENT", 435, 71, { width: 110, align: "center" });
 
-    // ================= DESCRIPTIVE INFO PANEL =================
-    doc.rect(50, 180, 500, 100).fill(BG_SOFT);
+    // 4. METADATA GRID (Govt style box)
+    doc.rect(50, 130, 500, 45).strokeColor(BORDER_COLOR).lineWidth(1).stroke();
+    doc.moveTo(300, 130).lineTo(300, 175).stroke(); // Vertical divider
 
-    // LEFT: Billing To
-    doc
-      .fillColor(TEXT_LIGHT)
-      .fontSize(8)
-      .font("Helvetica-Bold")
-      .text("STUDENT DETAILS", 70, 200);
+    // Labels
+    doc.fillColor(TEXT_LIGHT).fontSize(7).font("Helvetica-Bold");
+    doc.text("RECEIPT / INVOICE NUMBER", 60, 140);
+    doc.text("DATE OF ISSUE", 310, 140);
 
-    doc
-      .fillColor(DEEP_NAVY)
-      .fontSize(12)
-      .font("Helvetica-Bold")
-      .text(req.user.name.toUpperCase(), 70, 215)
-      .fontSize(10)
-      .font("Helvetica")
-      .text(req.user.email, 70, 230);
+    // Values
+    doc.fillColor(TEXT_MAIN).fontSize(10).text(invoiceNumber, 60, 155);
+    doc.text(new Date(payment.createdAt).toLocaleString("en-IN"), 310, 155);
 
-    // RIGHT: Invoice Meta
-    doc
-      .fillColor(TEXT_LIGHT)
-      .fontSize(8)
-      .font("Helvetica-Bold")
-      .text("INVOICE SUMMARY", 350, 200);
+    // 5. BILLING SECTION
+    doc.rect(50, 190, 500, 80).fill(BG_SOFT);
+    doc.fillColor(GOVT_BLUE).fontSize(9).font("Helvetica-Bold").text("CANDIDATE DETAILS", 70, 205);
+    
+    doc.fillColor(TEXT_MAIN).fontSize(11).text(req.user.name.toUpperCase(), 70, 222);
+    doc.fillColor(TEXT_LIGHT).fontSize(9).font("Helvetica").text(`Email: ${req.user.email}`, 70, 237);
+    doc.text(`Transaction ID: ${payment.paymentId}`, 70, 250);
 
-    doc
-      .fillColor(DEEP_NAVY)
-      .fontSize(10)
-      .font("Helvetica")
-      .text(`Invoice Number: ${invoiceNumber}`, 350, 215)
-      .text(`Date: ${new Date(payment.createdAt).toLocaleDateString("en-IN")}`, 350, 230)
-      .text(`Order ID: ${payment.orderId}`, 350, 245);
-    // ================= PAGE WATERMARK =================
-    const watermarkPath = path.join(process.cwd(), "src", "assets", "loader.png");
+    // Placeholder for QR Code (QR codes are very common in real receipts)
+    doc.rect(460, 195, 70, 70).strokeColor(BORDER_COLOR).stroke();
+    doc.fontSize(6).text("SCAN TO VERIFY", 460, 270, { width: 70, align: "center" });
 
+    // 6. WATERMARK
     try {
-      const pageWidth = doc.page.width;
-      const pageHeight = doc.page.height;
-
-      doc.save();
-
-      // 👇 very light opacity (perfect watermark)
-      doc.opacity(0.2);
-
-      // 👇 center me large watermark
-      const wmSize = 420;
-      doc.image(
-        watermarkPath,
-        (pageWidth - wmSize) / 2,
-        (pageHeight - wmSize) / 2,
-        {
-          width: wmSize,
-          height: wmSize,
-        }
-      );
-
+      doc.save().opacity(0.08);
+      doc.image(logoPath, (doc.page.width - 400) / 2, (doc.page.height - 400) / 2, { width: 400 });
       doc.restore();
-    } catch (err) {
+    } catch (err) {}
 
-    }
-    // ================= PRODUCT DESCRIPTION SECTION =================
-    doc.moveDown(8);
+    // 7. PARTICULARS TABLE
+    const tableTop = 300;
+    doc.rect(50, tableTop, 500, 25).fill(GOVT_BLUE);
+    doc.fillColor("#ffffff").fontSize(9).font("Helvetica-Bold");
+    doc.text("SR NO.", 60, tableTop + 8);
+    doc.text("DESCRIPTION OF SERVICE", 110, tableTop + 8);
+    doc.text("SAC CODE", 350, tableTop + 8);
+    doc.text("AMOUNT (INR)", 450, tableTop + 8, { align: "right", width: 90 });
 
-    doc
-      .fillColor(DEEP_NAVY)
-      .fontSize(11)
-      .font("Helvetica-Bold")
-      .text("ENROLLED SERVICE DESCRIPTION", 50, doc.y);
+    // Item Row
+    doc.fillColor(TEXT_MAIN).fontSize(10).font("Helvetica");
+    doc.text("01.", 60, tableTop + 40);
+    doc.font("Helvetica-Bold").text(payment.testSeriesId.title, 110, tableTop + 40);
+    doc.font("Helvetica").fontSize(8).text("E-Learning Test Series (UPSC/BPSC Specialized)", 110, tableTop + 55, { width: 200 });
+    doc.fontSize(10).text("9984", 350, tableTop + 40); // SAC Code for Education
+    doc.text(basePrice, 450, tableTop + 40, { align: "right", width: 90 });
 
-    doc.rect(50, doc.y + 5, 500, 2).fill(ACCENT_BLUE);
-
-    const tableTop = doc.y + 20;
-
-    // Item Header
-    doc
-      .fillColor(TEXT_LIGHT)
-      .fontSize(9)
-      .font("Helvetica-Bold")
-      .text("PARTICULARS", 50, tableTop)
-      .text("AMOUNT (INR)", 450, tableTop, { align: "right", width: 100 });
-
-    // Item Content
-    doc
-      .fillColor(DEEP_NAVY)
-      .fontSize(13)
-      .font("Helvetica-Bold")
-      .text(payment.testSeriesId.title, 50, tableTop + 25);
-
-    doc
-      .fillColor(TEXT_LIGHT)
-      .fontSize(9)
-      .font("Helvetica")
-      .text("Full Access to Test Modules, Performance Analytics, and Detailed Solutions.", 50, tableTop + 45);
-
-    doc
-      .fillColor(DEEP_NAVY)
-      .fontSize(12)
-      .text(basePrice, 450, tableTop + 25, { align: "right", width: 100 });
-
-    // ================= FINANCIAL BREAKDOWN =================
-    const summaryY = tableTop + 100;
-
-    doc
-      .save()
-      .lineWidth(0.7)                 // thinner border
-      .strokeColor("#000000")
-      .rect(320, summaryY, 230, 120)
-      .stroke()
-      .restore();
+    // 8. FINANCIAL SUMMARY
+    const summaryY = 450;
+    doc.lineCap('butt').moveTo(320, summaryY).lineTo(550, summaryY).stroke(BORDER_COLOR);
 
     const drawRow = (label, value, y, isBold = false) => {
-      doc
-        .fillColor(isBold ? DEEP_NAVY : TEXT_LIGHT)
-        .fontSize(isBold ? 12 : 10)
-        .font(isBold ? "Helvetica-Bold" : "Helvetica")
-        .text(label, 340, y)
-        .text(value, 450, y, { align: "right", width: 90 });
+      doc.fillColor(isBold ? DEEP_NAVY : TEXT_LIGHT).fontSize(isBold ? 11 : 9).font(isBold ? "Helvetica-Bold" : "Helvetica");
+      doc.text(label, 320, y);
+      doc.text(value, 450, y, { align: "right", width: 90 });
     };
 
-    drawRow("Sub-Total", basePrice, summaryY + 20);
-    drawRow("Tax (GST 18%)", gstAmount, summaryY + 45);
+    drawRow("Taxable Value", basePrice, summaryY + 15);
+    drawRow("CGST (9%)", (gstAmount / 2).toFixed(2), summaryY + 35);
+    drawRow("SGST (9%)", (gstAmount / 2).toFixed(2), summaryY + 55);
+    
+    doc.rect(320, summaryY + 75, 230, 30).fill(GOVT_BLUE);
+    doc.fillColor("#ffffff").fontSize(12).font("Helvetica-Bold").text("Total Paid", 330, summaryY + 85);
+    doc.text(`₹ ${totalPaid}`, 450, summaryY + 85, { align: "right", width: 90 });
 
-    doc
-      .save()
-      .opacity(0.6)
-      .rect(340, summaryY + 70, 200, 0.8)
-      .fill("#000000")
-      .restore();
-    drawRow("Total Amount", totalPaid, summaryY + 85, true);
+    // 9. SIGNATURE SECTION
+    const sigY = 620;
+    doc.fillColor(TEXT_MAIN).fontSize(8).font("Helvetica-Bold").text("Digitally Signed By:", 380, sigY);
+    doc.fontSize(10).text("The Brilliant Bihar", 380, sigY + 15);
+    doc.fontSize(7).font("Helvetica").fillColor(TEXT_LIGHT).text("Authorized Signatory", 380, sigY + 28);
+    
+    // Virtual Stamp
+    doc.save().opacity(0.7).circle(450, sigY + 20, 35).lineWidth(2).strokeColor(GOVT_BLUE).stroke();
+    doc.fontSize(6).fillColor(GOVT_BLUE).text("VERIFIED ACADEMIC", 420, sigY + 15, { width: 60, align: "center" });
 
-    // ================= SECURE VERIFICATION =================
-    const footerTop = 650;
+    // 10. TERMS & CONDITIONS (Small print like real receipts)
+    doc.rect(50, 700, 500, 60).strokeColor(BORDER_COLOR).stroke();
+    doc.fillColor(TEXT_MAIN).fontSize(7).font("Helvetica-Bold").text("TERMS & DISCLAIMERS:", 60, 710);
+    doc.font("Helvetica").fillColor(TEXT_LIGHT).text("1. This is a computer-generated receipt and does not require a physical signature.", 60, 722);
+    doc.text("2. Fees once paid are non-refundable and non-transferable under any circumstances.", 60, 732);
+    doc.text("3. This receipt is valid only subject to successful realization of payment from the gateway.", 60, 742);
 
-    doc.rect(50, footerTop, 200, 80).fill(BG_SOFT);
-
-    doc
-      .fillColor(SUCCESS_GREEN)
-      .fontSize(8)
-      .font("Helvetica-Bold")
-      .text("✓ PAYMENT VERIFIED SECURE", 70, footerTop + 20);
-
-    doc
-      .fillColor(DEEP_NAVY)
-      .fontSize(7)
-      .font("Helvetica")
-      .text("Transaction completed via encrypted gateway.", 70, footerTop + 35)
-      .text(`Gateway Ref: ${payment.paymentId}`, 70, footerTop + 45);
-
-    // ================= FOOTER =================
-    doc
-      .fillColor(TEXT_LIGHT)
-      .fontSize(8)
-      .text("The Brilliant Bihar - Empowering Future Success", 0, 780, { align: "center", width: doc.page.width })
-      .text("This is a digitally signed document. No physical signature required. Currency: INR", 0, 792, { align: "center", width: doc.page.width });
+    // 11. FOOTER
+    doc.fontSize(8).fillColor(TEXT_LIGHT).text("System-generated Invoice | IP: " + (req.ip || "127.0.0.1") + " | Time: " + new Date().toISOString(), 0, 790, { align: "center" });
 
     doc.end();
 
   } catch (error) {
-    console.error("PDF Generation Error:", error);
-
-    if (!res.headersSent) {
-      return res.status(500).json({
-        message: "Invoice generation failed"
-      });
-    }
+    console.error("Receipt Enhancement Error:", error);
+    if (!res.headersSent) res.status(500).json({ message: "Invoice generation failed" });
   }
 };
 
