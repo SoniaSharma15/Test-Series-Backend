@@ -1,6 +1,9 @@
 import express from "express";
 import cors from "cors";
 
+/* ==============================
+   Route Imports
+============================== */
 import authRoutes from "./routes/auth.routes.js";
 import adminRoutes from "./routes/admin.routes.js";
 import testSeriesRoutes from "./routes/testSeries.routes.js";
@@ -17,25 +20,38 @@ import resultRoute from "./routes/resultRoutes.js";
 const app = express();
 
 /* ==============================
-   Middlewares
+   CORS Configuration
 ============================== */
-const allowedOrigin = process.env.FRONTEND_URL;
+
+const allowedOrigins = [
+  "https://testseries.thebrilliantbihar.com",
+  "https://www.testseries.thebrilliantbihar.com",
+
+  // Optional (for development)
+  "http://localhost:3000",
+  "http://localhost:5173",
+];
 
 app.use(
   cors({
     origin: function (origin, callback) {
-      // allow requests with no origin (like Postman / mobile apps)
+      // Allow requests with no origin (Postman / mobile apps)
       if (!origin) return callback(null, true);
 
-      if (origin === allowedOrigin) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
       }
+
+      console.error("Blocked by CORS:", origin);
+      return callback(new Error("Not allowed by CORS"));
     },
-    credentials: true, // if using cookies
+    credentials: true,
   })
 );
+
+/* ==============================
+   Middlewares
+============================== */
 app.use(express.json());
 
 /* ==============================
@@ -45,6 +61,7 @@ app.get("/api/health", (req, res) => {
   res.status(200).json({
     success: true,
     message: "API is running 🚀",
+    timestamp: new Date().toISOString(),
   });
 });
 
@@ -67,7 +84,7 @@ app.use("/api/results", resultRoute);
 /* ==============================
    404 Handler
 ============================== */
-app.use((req, res, next) => {
+app.use((req, res) => {
   res.status(404).json({
     success: false,
     message: `Route not found: ${req.originalUrl}`,
@@ -78,7 +95,7 @@ app.use((req, res, next) => {
    Global Error Handler
 ============================== */
 app.use((err, req, res, next) => {
-  console.error("ERROR:", err);
+  console.error("ERROR:", err.message);
 
   const statusCode = err.statusCode || 500;
 
