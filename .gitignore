@@ -1,2 +1,4 @@
 node_modules
 .env
+/utils/seed.js
+/utils/seedAdmin.js
