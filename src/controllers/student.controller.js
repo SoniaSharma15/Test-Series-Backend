@@ -1,6 +1,7 @@
 import Enrollment from "../models/Enrollment.js";
 import Test from "../models/Test.js";
 import Attempt from "../models/Attempt.js";
+import User from "../models/User.js";
 
 export const getStudentDashboard = async (req, res) => {
   try {
@@ -342,6 +343,158 @@ export const getStudentGlobalRank = async (req, res) => {
     });
   } catch (error) {
     console.error("Global Rank Error:", error);
+    return res.status(500).json({ message: error.message });
+  }
+};
+export const getStudentLeaderboard = async (req, res) => {
+  try {
+    const now = new Date();
+
+    // 1) All valid enrollments
+    const allEnrollments = await Enrollment.find({
+      status: "active",
+      accessGranted: true,
+    }).populate("testSeriesId", "_id startDate duration");
+
+    const validEnrollments = allEnrollments.filter((enrollment) => {
+      const series = enrollment.testSeriesId;
+      if (!series) return false;
+
+      if (!series.startDate || !series.duration) return true;
+
+      const start = new Date(series.startDate);
+      const expiry = new Date(start);
+      expiry.setDate(expiry.getDate() + series.duration);
+
+      return now <= expiry;
+    });
+
+    if (validEnrollments.length === 0) {
+      return res.json({
+        leaderboard: [],
+        message: "No active leaderboard data found",
+      });
+    }
+
+    const validStudentIds = [
+      ...new Set(validEnrollments.map((e) => e.studentId.toString())),
+    ];
+
+    const validSeriesIds = [
+      ...new Set(validEnrollments.map((e) => e.testSeriesId._id.toString())),
+    ];
+
+    // 2) Valid tests
+    const validTests = await Test.find({
+      testSeriesId: { $in: validSeriesIds },
+    }).select("_id");
+
+    const validTestIds = validTests.map((t) => t._id.toString());
+
+    // 3) Attempts from valid students + valid tests
+    const attempts = await Attempt.find({
+      studentId: { $in: validStudentIds },
+      testId: { $in: validTestIds },
+      status: { $in: ["COMPLETED", "AUTO_SUBMITTED"] },
+    }).select("studentId score correctCount attemptedCount submittedAt");
+
+    // 4) Student info
+    const students = await User.find({
+      _id: { $in: validStudentIds },
+      role: "student",
+    }).select("_id name email");
+
+    const studentMap = new Map(
+      students.map((s) => [
+        s._id.toString(),
+        {
+          name: s.name,
+          email: s.email,
+        },
+      ])
+    );
+
+    // 5) Aggregate stats manually
+    const statsMap = new Map();
+
+    attempts.forEach((a) => {
+      const sid = a.studentId.toString();
+
+      if (!statsMap.has(sid)) {
+        statsMap.set(sid, {
+          studentId: sid,
+          totalScore: 0,
+          totalCorrect: 0,
+          totalAttemptedQuestions: 0,
+          totalAttempts: 0,
+          highestScore: 0,
+          lastAttemptedAt: null,
+        });
+      }
+
+      const item = statsMap.get(sid);
+      const score = a.score || 0;
+
+      item.totalScore += score;
+      item.totalCorrect += a.correctCount || 0;
+      item.totalAttemptedQuestions += a.attemptedCount || 0;
+      item.totalAttempts += 1;
+      item.highestScore = Math.max(item.highestScore, score);
+
+      if (!item.lastAttemptedAt || new Date(a.submittedAt) > new Date(item.lastAttemptedAt)) {
+        item.lastAttemptedAt = a.submittedAt;
+      }
+    });
+
+    // 6) Build leaderboard
+    const leaderboard = Array.from(statsMap.values())
+      .filter((s) => s.totalAttempts > 0)
+      .map((s) => {
+        const student = studentMap.get(s.studentId);
+
+        const averageScore =
+          s.totalAttempts > 0 ? s.totalScore / s.totalAttempts : 0;
+
+        const avgAccuracy =
+          s.totalAttemptedQuestions > 0
+            ? (s.totalCorrect / s.totalAttemptedQuestions) * 100
+            : 0;
+
+        return {
+          studentId: s.studentId,
+          name: student?.name || "Unknown Student",
+          email: student?.email || "",
+          totalAttempts: s.totalAttempts,
+          averageScore: Math.round(averageScore * 100) / 100,
+          successRate: Math.round(avgAccuracy * 100) / 100,
+          highestScore: Math.round(s.highestScore * 100) / 100,
+          lastAttemptedAt: s.lastAttemptedAt,
+        };
+      });
+
+    // 7) Sort ranking
+    leaderboard.sort((a, b) => {
+      if (b.successRate !== a.successRate) {
+        return b.successRate - a.successRate;
+      }
+      if (b.totalAttempts !== a.totalAttempts) {
+        return b.totalAttempts - a.totalAttempts;
+      }
+      return b.averageScore - a.averageScore;
+    });
+
+    // 8) Add rank and keep top 10
+    const top10 = leaderboard.slice(0, 10).map((item, index) => ({
+      rank: index + 1,
+      ...item,
+    }));
+
+    return res.json({
+      totalParticipants: leaderboard.length,
+      leaderboard: top10,
+    });
+  } catch (error) {
+    console.error("Leaderboard Error:", error);
     return res.status(500).json({ message: error.message });
   }
 };
