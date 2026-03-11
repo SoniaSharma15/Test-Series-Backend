@@ -23,31 +23,40 @@ const app = express();
    CORS Configuration
 ============================== */
 
-const allowedOrigins = [
-  "https://testseries.thebrilliantbihar.com",
-  "https://www.testseries.thebrilliantbihar.com",
-   "https://thebrilliantbihar.com",
-   "https://www.thebrilliantbihar.com",
+// const allowedOrigins = [
+//   "https://testseries.thebrilliantbihar.com",
+//   "https://www.testseries.thebrilliantbihar.com",
+//    "https://thebrilliantbihar.com",
+//    "https://www.thebrilliantbihar.com",
 
-  // Optional (for development)
-  "http://localhost:3000",
-  "http://localhost:5173",
-];
+//   // Optional (for development)
+//   "http://localhost:3000",
+//   "http://localhost:5173",
+// ];
+
+// app.use(
+//   cors({
+//     origin: function (origin, callback) {
+//       // Allow requests with no origin (Postman / mobile apps)
+//       if (!origin) return callback(null, true);
+
+//       if (allowedOrigins.includes(origin)) {
+//         return callback(null, true);
+//       }
+
+//       console.error("Blocked by CORS:", origin);
+//       return callback(new Error("Not allowed by CORS"));
+//     },
+//     credentials: true,
+//   })
+// );
+
+
+import cors from "cors";
 
 app.use(
   cors({
-    origin: function (origin, callback) {
-      // Allow requests with no origin (Postman / mobile apps)
-      if (!origin) return callback(null, true);
-
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-
-      console.error("Blocked by CORS:", origin);
-      return callback(new Error("Not allowed by CORS"));
-    },
-    credentials: true,
+    origin: "*",
   })
 );
 
