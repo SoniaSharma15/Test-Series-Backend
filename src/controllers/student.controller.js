@@ -3,6 +3,20 @@ import Test from "../models/Test.js";
 import Attempt from "../models/Attempt.js";
 import User from "../models/User.js";
 
+const round2 = (num) => Math.round((Number(num) || 0) * 100) / 100;
+
+const isSeriesActive = (series, now = new Date()) => {
+  if (!series) return false;
+
+  if (!series.startDate || !series.duration) return true;
+
+  const start = new Date(series.startDate);
+  const expiry = new Date(start);
+  expiry.setDate(expiry.getDate() + Number(series.duration || 0));
+
+  return now <= expiry;
+};
+
 export const getStudentDashboard = async (req, res) => {
   try {
     if (!req.user) {
@@ -15,7 +29,6 @@ export const getStudentDashboard = async (req, res) => {
     /* =====================================================
        1️⃣ FETCH ENROLLMENTS
     ===================================================== */
-
     const enrollments = await Enrollment.find({
       studentId,
       status: "active",
@@ -23,31 +36,17 @@ export const getStudentDashboard = async (req, res) => {
     }).populate("testSeriesId");
 
     /* =====================================================
-       2️⃣ FILTER EXPIRED SERIES (STARTDATE + DURATION)
-       🔥 SAME LOGIC AS getAllTestSeries
+       2️⃣ FILTER ACTIVE / NON-EXPIRED SERIES
     ===================================================== */
-
-    const activeEnrollments = enrollments.filter((enrollment) => {
-      const series = enrollment.testSeriesId;
-      if (!series) return false;
-
-      if (!series.startDate || !series.duration) return true;
-
-      const start = new Date(series.startDate);
-      const expiry = new Date(start);
-      expiry.setDate(expiry.getDate() + series.duration);
-
-      return now <= expiry;
-    });
-
-    const activeSeriesIds = activeEnrollments.map(
-      (e) => e.testSeriesId._id
+    const activeEnrollments = enrollments.filter((enrollment) =>
+      isSeriesActive(enrollment.testSeriesId, now)
     );
+
+    const activeSeriesIds = activeEnrollments.map((e) => e.testSeriesId._id);
 
     /* =====================================================
        3️⃣ FETCH TESTS
     ===================================================== */
-
     const activeTests = await Test.find({
       testSeriesId: { $in: activeSeriesIds },
     });
@@ -57,7 +56,6 @@ export const getStudentDashboard = async (req, res) => {
     /* =====================================================
        4️⃣ FETCH ATTEMPTS
     ===================================================== */
-
     const attempts = await Attempt.find({
       studentId,
       testId: { $in: activeTestIds },
@@ -69,52 +67,44 @@ export const getStudentDashboard = async (req, res) => {
     /* =====================================================
        📊 GLOBAL STATS
     ===================================================== */
-
     let totalScore = 0;
     let highestScore = 0;
     let totalCorrect = 0;
     let totalAttemptedQuestions = 0;
 
     attempts.forEach((a) => {
-      const score = a.score || 0;
+      const score = Number(a.obtainedMarks) || 0;
 
       totalScore += score;
-      totalCorrect += a.correctCount || 0;
-      totalAttemptedQuestions += a.attemptedCount || 0;
+      totalCorrect += Number(a.correctCount) || 0;
+      totalAttemptedQuestions += Number(a.attemptedCount) || 0;
 
       if (score > highestScore) {
         highestScore = score;
       }
     });
 
-    const averageScore =
-      totalAttempts > 0 ? totalScore / totalAttempts : 0;
+    const averageScore = totalAttempts > 0 ? totalScore / totalAttempts : 0;
 
     const avgAccuracy =
       totalAttemptedQuestions > 0
         ? (totalCorrect / totalAttemptedQuestions) * 100
         : 0;
 
-    const lastScore = attempts[0]?.score || 0;
-
-    const round2 = (num) => Math.round(num * 100) / 100;
+    const lastScore = Number(attempts[0]?.obtainedMarks) || 0;
 
     /* =====================================================
        🎯 SERIES DATA
     ===================================================== */
-
     const smartSeries = activeEnrollments.map((enrollment) => {
       const series = enrollment.testSeriesId;
-      const seriesId = series._id;
+      const seriesId = series._id.toString();
 
       const seriesTests = activeTests.filter(
-        (t) =>
-          t.testSeriesId.toString() === seriesId.toString()
+        (t) => t.testSeriesId.toString() === seriesId
       );
 
-      const seriesTestIds = seriesTests.map((t) =>
-        t._id.toString()
-      );
+      const seriesTestIds = seriesTests.map((t) => t._id.toString());
 
       const seriesAttempts = attempts.filter((a) =>
         seriesTestIds.includes(a.testId.toString())
@@ -129,20 +119,16 @@ export const getStudentDashboard = async (req, res) => {
           ? Math.round((attemptedTests / totalTests) * 100)
           : 0;
 
-      /* 🔥 Same Expiry Calculation */
-
       let expiryDate = null;
 
       if (series.startDate && series.duration) {
         const start = new Date(series.startDate);
         expiryDate = new Date(start);
-        expiryDate.setDate(
-          expiryDate.getDate() + series.duration
-        );
+        expiryDate.setDate(expiryDate.getDate() + Number(series.duration));
       }
 
       return {
-        _id: seriesId,
+        _id: series._id,
         title: series.title,
         expiryDate,
         totalTests,
@@ -155,20 +141,18 @@ export const getStudentDashboard = async (req, res) => {
     /* =====================================================
        📈 PERFORMANCE GRAPH
     ===================================================== */
-
     const performanceGraphData = attempts
       .slice(0, 10)
       .reverse()
       .map((a) => ({
-        score: round2(a.score || 0),
+        score: round2(Number(a.obtainedMarks) || 0),
         date: a.submittedAt,
       }));
 
     /* =====================================================
        🚀 RESPONSE
     ===================================================== */
-
-    res.json({
+    return res.json({
       studentName: req.user.name,
       studentId,
 
@@ -184,10 +168,9 @@ export const getStudentDashboard = async (req, res) => {
 
       performanceGraphData,
     });
-
   } catch (error) {
     console.error("Dashboard Error:", error);
-    res.status(500).json({
+    return res.status(500).json({
       message: error.message,
     });
   }
@@ -202,25 +185,18 @@ export const getStudentGlobalRank = async (req, res) => {
     const studentId = req.user._id.toString();
     const now = new Date();
 
-    // 1) Current student's valid active enrollments
+    /* =====================================================
+       1️⃣ CURRENT STUDENT VALID ACTIVE ENROLLMENTS
+    ===================================================== */
     const studentEnrollments = await Enrollment.find({
       studentId,
       status: "active",
       accessGranted: true,
     }).populate("testSeriesId");
 
-    const validStudentEnrollments = studentEnrollments.filter((enrollment) => {
-      const series = enrollment.testSeriesId;
-      if (!series) return false;
-
-      if (!series.startDate || !series.duration) return true;
-
-      const start = new Date(series.startDate);
-      const expiry = new Date(start);
-      expiry.setDate(expiry.getDate() + series.duration);
-
-      return now <= expiry;
-    });
+    const validStudentEnrollments = studentEnrollments.filter((enrollment) =>
+      isSeriesActive(enrollment.testSeriesId, now)
+    );
 
     if (validStudentEnrollments.length === 0) {
       return res.json({
@@ -229,24 +205,17 @@ export const getStudentGlobalRank = async (req, res) => {
       });
     }
 
-    // 2) Get all valid enrollments of all students
+    /* =====================================================
+       2️⃣ ALL VALID ACTIVE ENROLLMENTS
+    ===================================================== */
     const allEnrollments = await Enrollment.find({
       status: "active",
       accessGranted: true,
     }).populate("testSeriesId", "_id startDate duration");
 
-    const validEnrollments = allEnrollments.filter((enrollment) => {
-      const series = enrollment.testSeriesId;
-      if (!series) return false;
-
-      if (!series.startDate || !series.duration) return true;
-
-      const start = new Date(series.startDate);
-      const expiry = new Date(start);
-      expiry.setDate(expiry.getDate() + series.duration);
-
-      return now <= expiry;
-    });
+    const validEnrollments = allEnrollments.filter((enrollment) =>
+      isSeriesActive(enrollment.testSeriesId, now)
+    );
 
     if (validEnrollments.length === 0) {
       return res.json({
@@ -255,23 +224,36 @@ export const getStudentGlobalRank = async (req, res) => {
       });
     }
 
-    // 3) Allowed studentIds and testSeriesIds
-    const validStudentIds = [...new Set(validEnrollments.map(e => e.studentId.toString()))];
-    const validSeriesIds = [...new Set(validEnrollments.map(e => e.testSeriesId._id.toString()))];
+    /* =====================================================
+       3️⃣ VALID STUDENTS + SERIES
+    ===================================================== */
+    const validStudentIds = [
+      ...new Set(validEnrollments.map((e) => e.studentId.toString())),
+    ];
 
-    // 4) Tests only from valid active series
+    const validSeriesIds = [
+      ...new Set(validEnrollments.map((e) => e.testSeriesId._id.toString())),
+    ];
+
+    /* =====================================================
+       4️⃣ VALID TESTS
+    ===================================================== */
     const validTests = await Test.find({
       testSeriesId: { $in: validSeriesIds },
     }).select("_id testSeriesId");
 
     const validTestIds = validTests.map((t) => t._id.toString());
 
-    // 5) Attempts only for valid students + valid tests
+    /* =====================================================
+       5️⃣ ATTEMPTS
+    ===================================================== */
     const attempts = await Attempt.find({
       studentId: { $in: validStudentIds },
       testId: { $in: validTestIds },
       status: { $in: ["COMPLETED", "AUTO_SUBMITTED"] },
-    }).select("studentId score correctCount attemptedCount testId");
+    }).select(
+      "studentId obtainedMarks totalMarks correctCount attemptedCount submittedAt"
+    );
 
     const statsMap = new Map();
 
@@ -289,13 +271,15 @@ export const getStudentGlobalRank = async (req, res) => {
       }
 
       const item = statsMap.get(sid);
-      item.totalScore += a.score || 0;
-      item.totalCorrect += a.correctCount || 0;
-      item.totalAttemptedQuestions += a.attemptedCount || 0;
+      item.totalScore += Number(a.obtainedMarks) || 0;
+      item.totalCorrect += Number(a.correctCount) || 0;
+      item.totalAttemptedQuestions += Number(a.attemptedCount) || 0;
       item.totalAttempts += 1;
     });
 
-    // only students who actually participated
+    /* =====================================================
+       6️⃣ LEADERBOARD
+    ===================================================== */
     const leaderboard = Array.from(statsMap.values())
       .filter((s) => s.totalAttempts > 0)
       .map((s) => ({
@@ -338,39 +322,34 @@ export const getStudentGlobalRank = async (req, res) => {
       globalRank: rankIndex + 1,
       totalParticipants: leaderboard.length,
       totalAttempts: currentStudent.totalAttempts,
-      avgAccuracy: Math.round(currentStudent.avgAccuracy * 100) / 100,
-      averageScore: Math.round(currentStudent.averageScore * 100) / 100,
+      avgAccuracy: round2(currentStudent.avgAccuracy),
+      averageScore: round2(currentStudent.averageScore),
     });
   } catch (error) {
     console.error("Global Rank Error:", error);
     return res.status(500).json({ message: error.message });
   }
 };
+
 export const getStudentLeaderboard = async (req, res) => {
   try {
     const now = new Date();
 
-    // 1) All valid enrollments
+    /* =====================================================
+       1️⃣ ALL VALID ACTIVE ENROLLMENTS
+    ===================================================== */
     const allEnrollments = await Enrollment.find({
       status: "active",
       accessGranted: true,
     }).populate("testSeriesId", "_id startDate duration");
 
-    const validEnrollments = allEnrollments.filter((enrollment) => {
-      const series = enrollment.testSeriesId;
-      if (!series) return false;
-
-      if (!series.startDate || !series.duration) return true;
-
-      const start = new Date(series.startDate);
-      const expiry = new Date(start);
-      expiry.setDate(expiry.getDate() + series.duration);
-
-      return now <= expiry;
-    });
+    const validEnrollments = allEnrollments.filter((enrollment) =>
+      isSeriesActive(enrollment.testSeriesId, now)
+    );
 
     if (validEnrollments.length === 0) {
       return res.json({
+        totalParticipants: 0,
         leaderboard: [],
         message: "No active leaderboard data found",
       });
@@ -384,21 +363,29 @@ export const getStudentLeaderboard = async (req, res) => {
       ...new Set(validEnrollments.map((e) => e.testSeriesId._id.toString())),
     ];
 
-    // 2) Valid tests
+    /* =====================================================
+       2️⃣ VALID TESTS
+    ===================================================== */
     const validTests = await Test.find({
       testSeriesId: { $in: validSeriesIds },
     }).select("_id");
 
     const validTestIds = validTests.map((t) => t._id.toString());
 
-    // 3) Attempts from valid students + valid tests
+    /* =====================================================
+       3️⃣ ATTEMPTS
+    ===================================================== */
     const attempts = await Attempt.find({
       studentId: { $in: validStudentIds },
       testId: { $in: validTestIds },
       status: { $in: ["COMPLETED", "AUTO_SUBMITTED"] },
-    }).select("studentId score correctCount attemptedCount submittedAt");
+    }).select(
+      "studentId obtainedMarks totalMarks correctCount attemptedCount submittedAt"
+    );
 
-    // 4) Student info
+    /* =====================================================
+       4️⃣ STUDENT INFO
+    ===================================================== */
     const students = await User.find({
       _id: { $in: validStudentIds },
       role: "student",
@@ -414,7 +401,9 @@ export const getStudentLeaderboard = async (req, res) => {
       ])
     );
 
-    // 5) Aggregate stats manually
+    /* =====================================================
+       5️⃣ AGGREGATE
+    ===================================================== */
     const statsMap = new Map();
 
     attempts.forEach((a) => {
@@ -433,20 +422,25 @@ export const getStudentLeaderboard = async (req, res) => {
       }
 
       const item = statsMap.get(sid);
-      const score = a.score || 0;
+      const score = Number(a.obtainedMarks) || 0;
 
       item.totalScore += score;
-      item.totalCorrect += a.correctCount || 0;
-      item.totalAttemptedQuestions += a.attemptedCount || 0;
+      item.totalCorrect += Number(a.correctCount) || 0;
+      item.totalAttemptedQuestions += Number(a.attemptedCount) || 0;
       item.totalAttempts += 1;
       item.highestScore = Math.max(item.highestScore, score);
 
-      if (!item.lastAttemptedAt || new Date(a.submittedAt) > new Date(item.lastAttemptedAt)) {
+      if (
+        !item.lastAttemptedAt ||
+        new Date(a.submittedAt) > new Date(item.lastAttemptedAt)
+      ) {
         item.lastAttemptedAt = a.submittedAt;
       }
     });
 
-    // 6) Build leaderboard
+    /* =====================================================
+       6️⃣ BUILD LEADERBOARD
+    ===================================================== */
     const leaderboard = Array.from(statsMap.values())
       .filter((s) => s.totalAttempts > 0)
       .map((s) => {
@@ -465,14 +459,16 @@ export const getStudentLeaderboard = async (req, res) => {
           name: student?.name || "Unknown Student",
           email: student?.email || "",
           totalAttempts: s.totalAttempts,
-          averageScore: Math.round(averageScore * 100) / 100,
-          successRate: Math.round(avgAccuracy * 100) / 100,
-          highestScore: Math.round(s.highestScore * 100) / 100,
+          averageScore: round2(averageScore),
+          successRate: round2(avgAccuracy),
+          highestScore: round2(s.highestScore),
           lastAttemptedAt: s.lastAttemptedAt,
         };
       });
 
-    // 7) Sort ranking
+    /* =====================================================
+       7️⃣ SORT
+    ===================================================== */
     leaderboard.sort((a, b) => {
       if (b.successRate !== a.successRate) {
         return b.successRate - a.successRate;
@@ -483,7 +479,9 @@ export const getStudentLeaderboard = async (req, res) => {
       return b.averageScore - a.averageScore;
     });
 
-    // 8) Add rank and keep top 10
+    /* =====================================================
+       8️⃣ TOP 10
+    ===================================================== */
     const top10 = leaderboard.slice(0, 10).map((item, index) => ({
       rank: index + 1,
       ...item,
