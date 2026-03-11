@@ -389,14 +389,13 @@ export const getStudentLeaderboard = async (req, res) => {
     const students = await User.find({
       _id: { $in: validStudentIds },
       role: "student",
-    }).select("_id name email");
+    }).select("_id name ");
 
     const studentMap = new Map(
       students.map((s) => [
         s._id.toString(),
         {
           name: s.name,
-          email: s.email,
         },
       ])
     );
@@ -457,7 +456,6 @@ export const getStudentLeaderboard = async (req, res) => {
         return {
           studentId: s.studentId,
           name: student?.name || "Unknown Student",
-          email: student?.email || "",
           totalAttempts: s.totalAttempts,
           averageScore: round2(averageScore),
           successRate: round2(avgAccuracy),
