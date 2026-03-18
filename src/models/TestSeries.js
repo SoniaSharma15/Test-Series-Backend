@@ -46,6 +46,9 @@ const testSeriesSchema = new mongoose.Schema(
     thumbnail: {
       type: String, // image URL or path
     },
+    coverImage: {
+      type: String, // image URL or path
+    },
     offerExpiry: {
       type: Date,
     },

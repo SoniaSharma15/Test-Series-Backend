@@ -34,7 +34,10 @@ router.post(
   "/",
   protect,
   authorizeRole("admin"),
-  upload.single("thumbnail"),
+ upload.fields([
+  { name: "thumbnail", maxCount: 1 },
+  { name: "coverImage", maxCount: 1 },
+]),
   uploadToCloudinary,
   createTestSeries
 );
@@ -44,7 +47,10 @@ router.put(
   "/:id",
   protect,
   authorizeRole("admin"),
-  upload.single("thumbnail"),
+ upload.fields([
+  { name: "thumbnail", maxCount: 1 },
+  { name: "coverImage", maxCount: 1 },
+]),
   uploadToCloudinary,
   updateTestSeries
 );

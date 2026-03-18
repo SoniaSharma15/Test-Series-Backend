@@ -26,7 +26,7 @@ const upload = multer({
 /* ================= CLOUDINARY UPLOAD ================= */
 const uploadToCloudinary = async (req, res, next) => {
   try {
-    if (!req.file) return next();
+    if (!req.files) return next();
 
     if (!cloudinary) {
       const err = new Error("Cloudinary not configured");
@@ -34,25 +34,44 @@ const uploadToCloudinary = async (req, res, next) => {
       throw err;
     }
 
-    const result = await new Promise((resolve, reject) => {
-      const stream = cloudinary.uploader.upload_stream(
-        {
-          folder: "test-series",
-          resource_type: "image",
-        },
-        (error, result) => {
-          if (error) reject(error);
-          else resolve(result);
-        }
-      );
+    const uploadSingle = (fileBuffer) => {
+      return new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          {
+            folder: "test-series",
+            resource_type: "image",
+          },
+          (error, result) => {
+            if (error) reject(error);
+            else resolve(result);
+          }
+        );
 
-      stream.end(req.file.buffer);
-    });
-
-    req.uploadedFile = {
-      url: result.secure_url,
-      publicId: result.public_id,
+        stream.end(fileBuffer);
+      });
     };
+
+    const uploadedFiles = {};
+
+    // 🔹 Upload Thumbnail
+    if (req.files.thumbnail) {
+      const result = await uploadSingle(req.files.thumbnail[0].buffer);
+      uploadedFiles.thumbnail = {
+        url: result.secure_url,
+        publicId: result.public_id,
+      };
+    }
+
+    // 🔹 Upload Cover Image
+    if (req.files.coverImage) {
+      const result = await uploadSingle(req.files.coverImage[0].buffer);
+      uploadedFiles.coverImage = {
+        url: result.secure_url,
+        publicId: result.public_id,
+      };
+    }
+
+    req.uploadedFiles = uploadedFiles;
 
     next();
   } catch (error) {
@@ -60,5 +79,4 @@ const uploadToCloudinary = async (req, res, next) => {
     next(error);
   }
 };
-
 export { upload, uploadToCloudinary };

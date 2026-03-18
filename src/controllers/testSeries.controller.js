@@ -28,7 +28,8 @@ export const createTestSeries = async (req, res) => {
       offerExpiry: req.body.offerExpiry || null,
       features: parseJSON(req.body.features),
       subjects: parseJSON(req.body.subjects),
-      thumbnail: req.uploadedFile?.url || "",
+      thumbnail: req.uploadedFiles?.thumbnail?.url || "",
+coverImage: req.uploadedFiles?.coverImage?.url || "",
     });
 
     res.status(201).json(testSeries);
@@ -73,9 +74,13 @@ export const updateTestSeries = async (req, res) => {
       subjects: parseJSON(req.body.subjects),
     };
 
-    if (req.uploadedFile?.url) {
-      updateData.thumbnail = req.uploadedFile.url;
-    }
+  if (req.uploadedFiles?.thumbnail?.url) {
+  updateData.thumbnail = req.uploadedFiles.thumbnail.url;
+}
+
+if (req.uploadedFiles?.coverImage?.url) {
+  updateData.coverImage = req.uploadedFiles.coverImage.url;
+}
 
     const updated = await TestSeries.findByIdAndUpdate(
       req.params.id,
