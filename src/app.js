@@ -9,7 +9,8 @@ import testSeriesRoutes from "./routes/testSeries.routes.js";
 import testRoutes from "./routes/test.routes.js";
 import questionRoutes from "./routes/question.routes.js";
 import studentRoutes from "./routes/student.routes.js";
-import paymentRoutes from "./routes/payment.routes.js";
+// Razorpay payment routes are disabled; all courses use free enrollment.
+// import paymentRoutes from "./routes/payment.routes.js";
 import enrollmentRoutes from "./routes/enrollment.routes.js";
 import attemptRoutes from "./routes/attempt.routes.js";
 import adminEnrollmentRoutes from "./routes/adminEnrollmentRoutes.js";
@@ -84,7 +85,7 @@ app.use("/api/test-series", testSeriesRoutes);
 app.use("/api/tests", testRoutes);
 app.use("/api/questions", questionRoutes);
 app.use("/api/student", studentRoutes);
-app.use("/api/payment", paymentRoutes);
+// app.use("/api/payment", paymentRoutes);
 app.use("/api/enrollments", enrollmentRoutes);
 app.use("/api/attempts", attemptRoutes);
 app.use("/api/admin/enrollments", adminEnrollmentRoutes);

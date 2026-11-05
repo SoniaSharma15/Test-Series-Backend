@@ -20,25 +20,20 @@ const enrollmentSchema = new mongoose.Schema(
     source: {
       type: String,
       enum: ["payment", "admin", "free"],
-      default: "payment",
+      default: "free",
     },
 
-    // 🔹 Payment reference (only required for payment source)
+    // 🔹 Payment reference (optional)
     paymentId: {
       type: String,
-      required: function () {
-        return this.source === "payment";
-      },
     },
 
     amount: {
       type: Number,
-      required: true,
-      min: 0,
       default: 0,
     },
 
-    // 🔹 Enrollment state (NOT payment state)
+    // 🔹 Enrollment state
     status: {
       type: String,
       enum: ["active", "cancelled", "refunded"],
@@ -52,6 +47,7 @@ const enrollmentSchema = new mongoose.Schema(
 
     expiryDate: {
       type: Date,
+      default: null,
     },
 
     accessGranted: {

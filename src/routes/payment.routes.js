@@ -1,8 +1,8 @@
 import express from "express";
 import {
-  createOrder,
+  // createOrder,       // ── DISABLED: Razorpay paid enrollment commented out ──
   enrollInFreeSeries,
-  verifyPayment,
+  verifyPayment,       // kept but route disabled below
   getPaymentHistory,
   downloadReceipt
 } from "../controllers/payment.controller.js";
@@ -20,12 +20,13 @@ router.get(
   getPaymentHistory
 );
 
-router.post(
-  "/create-order",
-  protect,
-  authorizeRole("student"),
-  createOrder
-);
+// ── DISABLED: Razorpay paid order creation ──
+// router.post(
+//   "/create-order",
+//   protect,
+//   authorizeRole("student"),
+//   createOrder
+// );
 
 router.post(
   "/free-enroll",
@@ -34,12 +35,13 @@ router.post(
   enrollInFreeSeries
 );
 
-router.post(
-  "/verify",
-  protect,
-  authorizeRole("student"),
-  verifyPayment
-);
+// ── DISABLED: Razorpay payment verification ──
+// router.post(
+//   "/verify",
+//   protect,
+//   authorizeRole("student"),
+//   verifyPayment
+// );
 
 router.get(
   "/receipt/:paymentId",

@@ -5,14 +5,6 @@ export const createTestSeries = async (req, res) => {
   try {
     const parseNumber = (value, def = 0) =>
       isNaN(Number(value)) ? def : Number(value);
-    const price = Number(req.body.price);
-
-    if (!Number.isFinite(price) || price < 0) {
-      return res.status(400).json({
-        message: "Selling price must be zero or greater. Check the MRP and discount.",
-      });
-    }
-
     const parseJSON = (value) => {
       try {
         return value ? JSON.parse(value) : [];
@@ -24,9 +16,9 @@ export const createTestSeries = async (req, res) => {
     const testSeries = await TestSeries.create({
       title: req.body.title?.trim(),
       description: req.body.description?.trim(),
-      price,
-      originalPrice: parseNumber(req.body.originalPrice),
-      discount: parseNumber(req.body.discount),
+      price: 0,
+      originalPrice: 0,
+      discount: 0,
       duration: parseNumber(req.body.duration),
       language: req.body.language?.trim(),
       startDate: req.body.startDate || null,
@@ -57,14 +49,6 @@ export const updateTestSeries = async (req, res) => {
 
     const parseNumber = (value, def = 0) =>
       isNaN(Number(value)) ? def : Number(value);
-    const price = Number(req.body.price);
-
-    if (!Number.isFinite(price) || price < 0) {
-      return res.status(400).json({
-        message: "Selling price must be zero or greater. Check the MRP and discount.",
-      });
-    }
-
     const parseJSON = (value) => {
       try {
         return value ? JSON.parse(value) : [];
@@ -76,9 +60,9 @@ export const updateTestSeries = async (req, res) => {
     const updateData = {
       title: req.body.title?.trim(),
       description: req.body.description?.trim(),
-      price,
-      originalPrice: parseNumber(req.body.originalPrice),
-      discount: parseNumber(req.body.discount),
+      price: 0,
+      originalPrice: 0,
+      discount: 0,
       duration: parseNumber(req.body.duration),
       language: req.body.language?.trim(),
       startDate: req.body.startDate || null,
@@ -161,21 +145,13 @@ export const getAllTestSeries = async (req, res) => {
       .lean();
 
     // 🔥 Filter expired series based on duration
-    const activeSeries = seriesList.filter((series) => {
-      if (!series.startDate || !series.duration) return true;
-
-      const start = new Date(series.startDate);
-      const expiry = new Date(start);
-      expiry.setDate(expiry.getDate() + series.duration);
-
-      return now <= expiry;
-    });
-
     let enrolledSet = new Set();
 
     if (userId) {
       const enrollments = await Enrollment.find({
         studentId: userId,
+        status: "active",
+        accessGranted: true,
       }).select("testSeriesId");
 
       enrolledSet = new Set(
@@ -183,8 +159,11 @@ export const getAllTestSeries = async (req, res) => {
       );
     }
 
-    const updated = activeSeries.map((series) => ({
+    const updated = seriesList.map((series) => ({
       ...series,
+      price: 0,
+      originalPrice: 0,
+      discount: 0,
       isEnrolled: enrolledSet.has(series._id.toString()),
     }));
 
@@ -198,8 +177,27 @@ export const getAllTestSeries = async (req, res) => {
 
 export const getSingleTestSeries = async (req, res) => {
   try {
-    const data = await TestSeries.findById(req.params.id);
-    res.json(data);
+    const data = await TestSeries.findById(req.params.id).lean();
+    if (!data) return res.json(null);
+
+    const isEnrolled = req.user
+      ? Boolean(
+          await Enrollment.exists({
+            studentId: req.user._id,
+            testSeriesId: data._id,
+            status: "active",
+            accessGranted: true,
+          })
+        )
+      : false;
+
+    res.json({
+      ...data,
+      price: 0,
+      originalPrice: 0,
+      discount: 0,
+      isEnrolled,
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

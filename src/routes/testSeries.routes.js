@@ -22,8 +22,8 @@ const router = express.Router();
 // Get all test series (with optional login)
 router.get("/", optionalAuth, getAllTestSeries);
 
-// Get single test series
-router.get("/:id", getSingleTestSeries);
+// Get single test series (with optional login)
+router.get("/:id", optionalAuth, getSingleTestSeries);
 
 /* ===================================================
    ADMIN ROUTES

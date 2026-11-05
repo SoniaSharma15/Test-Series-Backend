@@ -1,7 +1,10 @@
 import express from "express";
 import { protect } from "../middlewares/auth.middleware.js";
 import { authorizeRole } from "../middlewares/role.middleware.js";
-import { getMyEnrollments } from "../controllers/enrollment.controller.js";
+import {
+  enrollInFreeSeries,
+  getMyEnrollments,
+} from "../controllers/enrollment.controller.js";
 
 const router = express.Router();
 
@@ -10,6 +13,13 @@ router.get(
   protect,
   authorizeRole("student"),
   getMyEnrollments
+);
+
+router.post(
+  "/free",
+  protect,
+  authorizeRole("student"),
+  enrollInFreeSeries
 );
 
 export default router;

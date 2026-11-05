@@ -5,16 +5,8 @@ import User from "../models/User.js";
 
 const round2 = (num) => Math.round((Number(num) || 0) * 100) / 100;
 
-const isSeriesActive = (series, now = new Date()) => {
-  if (!series) return false;
-
-  if (!series.startDate || !series.duration) return true;
-
-  const start = new Date(series.startDate);
-  const expiry = new Date(start);
-  expiry.setDate(expiry.getDate() + Number(series.duration || 0));
-
-  return now <= expiry;
+const isEnrollmentActive = (enrollment) => {
+  return Boolean(enrollment?.testSeriesId);
 };
 
 export const getStudentDashboard = async (req, res) => {
@@ -39,7 +31,7 @@ export const getStudentDashboard = async (req, res) => {
        2️⃣ FILTER ACTIVE / NON-EXPIRED SERIES
     ===================================================== */
     const activeEnrollments = enrollments.filter((enrollment) =>
-      isSeriesActive(enrollment.testSeriesId, now)
+      isEnrollmentActive(enrollment, now)
     );
 
     const activeSeriesIds = activeEnrollments.map((e) => e.testSeriesId._id);
@@ -119,12 +111,13 @@ export const getStudentDashboard = async (req, res) => {
           ? Math.round((attemptedTests / totalTests) * 100)
           : 0;
 
-      let expiryDate = null;
+      let expiryDate = enrollment.expiryDate || null;
 
-      if (series.startDate && series.duration) {
-        const start = new Date(series.startDate);
-        expiryDate = new Date(start);
-        expiryDate.setDate(expiryDate.getDate() + Number(series.duration));
+      if (!expiryDate && series.startDate && series.duration) {
+        expiryDate = new Date(series.startDate);
+        expiryDate.setDate(
+          expiryDate.getDate() + Number(series.duration)
+        );
       }
 
       return {
@@ -195,7 +188,7 @@ export const getStudentGlobalRank = async (req, res) => {
     }).populate("testSeriesId");
 
     const validStudentEnrollments = studentEnrollments.filter((enrollment) =>
-      isSeriesActive(enrollment.testSeriesId, now)
+      isEnrollmentActive(enrollment, now)
     );
 
     if (validStudentEnrollments.length === 0) {
@@ -214,7 +207,7 @@ export const getStudentGlobalRank = async (req, res) => {
     }).populate("testSeriesId", "_id startDate duration");
 
     const validEnrollments = allEnrollments.filter((enrollment) =>
-      isSeriesActive(enrollment.testSeriesId, now)
+      isEnrollmentActive(enrollment, now)
     );
 
     if (validEnrollments.length === 0) {
@@ -344,7 +337,7 @@ export const getStudentLeaderboard = async (req, res) => {
     }).populate("testSeriesId", "_id startDate duration");
 
     const validEnrollments = allEnrollments.filter((enrollment) =>
-      isSeriesActive(enrollment.testSeriesId, now)
+      isEnrollmentActive(enrollment, now)
     );
 
     if (validEnrollments.length === 0) {

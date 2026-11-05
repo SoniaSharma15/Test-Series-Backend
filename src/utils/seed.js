@@ -181,9 +181,9 @@ const seedData = async () => {
       const series = await TestSeries.create({
         title: titles[s],
         description: "UPSC CSE Prelims based real exam pattern test series.",
-        price: 4999,
-        originalPrice: 7999,
-        discount: 37,
+        price: 0,
+        originalPrice: 0,
+        discount: 0,
         duration: 180,
         startDate: new Date(),
         language: "English & Hindi",
