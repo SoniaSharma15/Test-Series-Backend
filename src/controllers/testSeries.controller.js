@@ -1,12 +1,17 @@
 import TestSeries from "../models/TestSeries.js";
 import Enrollment from "../models/Enrollment.js";
-
+import cloudinary from "../config/cloudinary.js";
 export const createTestSeries = async (req, res) => {
   try {
-    const parseNumber = (value, defaultValue = 0) => {
-      const num = Number(value);
-      return isNaN(num) ? defaultValue : num;
-    };
+    const parseNumber = (value, def = 0) =>
+      isNaN(Number(value)) ? def : Number(value);
+    const price = Number(req.body.price);
+
+    if (!Number.isFinite(price) || price < 0) {
+      return res.status(400).json({
+        message: "Selling price must be zero or greater. Check the MRP and discount.",
+      });
+    }
 
     const parseJSON = (value) => {
       try {
@@ -19,7 +24,7 @@ export const createTestSeries = async (req, res) => {
     const testSeries = await TestSeries.create({
       title: req.body.title?.trim(),
       description: req.body.description?.trim(),
-      price: parseNumber(req.body.price),
+      price,
       originalPrice: parseNumber(req.body.originalPrice),
       discount: parseNumber(req.body.discount),
       duration: parseNumber(req.body.duration),
@@ -28,8 +33,8 @@ export const createTestSeries = async (req, res) => {
       offerExpiry: req.body.offerExpiry || null,
       features: parseJSON(req.body.features),
       subjects: parseJSON(req.body.subjects),
-      thumbnail: req.uploadedFiles?.thumbnail?.url || "",
-coverImage: req.uploadedFiles?.coverImage?.url || "",
+      thumbnail: req.uploadedFiles?.thumbnail || null,
+      coverImage: req.uploadedFiles?.coverImage || null,
     });
 
     res.status(201).json(testSeries);
@@ -42,15 +47,23 @@ coverImage: req.uploadedFiles?.coverImage?.url || "",
   }
 };
 
-
-
-
 export const updateTestSeries = async (req, res) => {
   try {
-    const parseNumber = (value, defaultValue = 0) => {
-      const num = Number(value);
-      return isNaN(num) ? defaultValue : num;
-    };
+    const existing = await TestSeries.findById(req.params.id);
+
+    if (!existing) {
+      return res.status(404).json({ message: "Not found" });
+    }
+
+    const parseNumber = (value, def = 0) =>
+      isNaN(Number(value)) ? def : Number(value);
+    const price = Number(req.body.price);
+
+    if (!Number.isFinite(price) || price < 0) {
+      return res.status(400).json({
+        message: "Selling price must be zero or greater. Check the MRP and discount.",
+      });
+    }
 
     const parseJSON = (value) => {
       try {
@@ -63,7 +76,7 @@ export const updateTestSeries = async (req, res) => {
     const updateData = {
       title: req.body.title?.trim(),
       description: req.body.description?.trim(),
-      price: parseNumber(req.body.price),
+      price,
       originalPrice: parseNumber(req.body.originalPrice),
       discount: parseNumber(req.body.discount),
       duration: parseNumber(req.body.duration),
@@ -74,13 +87,21 @@ export const updateTestSeries = async (req, res) => {
       subjects: parseJSON(req.body.subjects),
     };
 
-  if (req.uploadedFiles?.thumbnail?.url) {
-  updateData.thumbnail = req.uploadedFiles.thumbnail.url;
-}
+    // 🔥 Replace Thumbnail
+    if (req.uploadedFiles?.thumbnail) {
+      if (existing.thumbnail?.publicId) {
+        await cloudinary.uploader.destroy(existing.thumbnail.publicId);
+      }
+      updateData.thumbnail = req.uploadedFiles.thumbnail;
+    }
 
-if (req.uploadedFiles?.coverImage?.url) {
-  updateData.coverImage = req.uploadedFiles.coverImage.url;
-}
+    // 🔥 Replace Cover
+    if (req.uploadedFiles?.coverImage) {
+      if (existing.coverImage?.publicId) {
+        await cloudinary.uploader.destroy(existing.coverImage.publicId);
+      }
+      updateData.coverImage = req.uploadedFiles.coverImage;
+    }
 
     const updated = await TestSeries.findByIdAndUpdate(
       req.params.id,
@@ -95,17 +116,40 @@ if (req.uploadedFiles?.coverImage?.url) {
   }
 };
 
-
-
 export const deleteTestSeries = async (req, res) => {
   try {
+    const series = await TestSeries.findById(req.params.id);
+
+    if (!series) {
+      return res.status(404).json({ message: "Not found" });
+    }
+
+    // 🔥 Delete images from cloudinary
+    const deletions = [];
+
+    if (series.thumbnail?.publicId) {
+      deletions.push(
+        cloudinary.uploader.destroy(series.thumbnail.publicId)
+      );
+    }
+
+    if (series.coverImage?.publicId) {
+      deletions.push(
+        cloudinary.uploader.destroy(series.coverImage.publicId)
+      );
+    }
+
+    await Promise.all(deletions);
+
+    // 🔥 Delete DB
     await TestSeries.findByIdAndDelete(req.params.id);
-    res.json({ message: "Test Series deleted" });
+
+    res.json({ message: "Deleted successfully 🚀" });
   } catch (error) {
+    console.error("DELETE ERROR:", error);
     res.status(500).json({ message: error.message });
   }
 };
-
 
 export const getAllTestSeries = async (req, res) => {
   try {

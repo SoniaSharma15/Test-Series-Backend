@@ -44,10 +44,12 @@ const testSeriesSchema = new mongoose.Schema(
     ],
 
     thumbnail: {
-      type: String, // image URL or path
+      url: String,
+      publicId: String,
     },
     coverImage: {
-      type: String, // image URL or path
+      url: String,
+      publicId: String,
     },
     offerExpiry: {
       type: Date,
@@ -57,7 +59,7 @@ const testSeriesSchema = new mongoose.Schema(
       default: 0,
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 export default mongoose.model("TestSeries", testSeriesSchema);

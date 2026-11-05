@@ -19,22 +19,18 @@ const upload = multer({
   storage,
   fileFilter,
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB
+    fileSize: 5 * 1024 * 1024,
   },
 });
 
 /* ================= CLOUDINARY UPLOAD ================= */
 const uploadToCloudinary = async (req, res, next) => {
   try {
-    if (!req.files) return next();
-
-    if (!cloudinary) {
-      const err = new Error("Cloudinary not configured");
-      err.statusCode = 500;
-      throw err;
+    if (!req.files || Object.keys(req.files).length === 0) {
+      return next();
     }
 
-    const uploadSingle = (fileBuffer) => {
+    const uploadSingle = (buffer) => {
       return new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
           {
@@ -46,15 +42,14 @@ const uploadToCloudinary = async (req, res, next) => {
             else resolve(result);
           }
         );
-
-        stream.end(fileBuffer);
+        stream.end(buffer);
       });
     };
 
     const uploadedFiles = {};
 
-    // 🔹 Upload Thumbnail
-    if (req.files.thumbnail) {
+    // ✅ Thumbnail
+    if (req.files.thumbnail?.[0]) {
       const result = await uploadSingle(req.files.thumbnail[0].buffer);
       uploadedFiles.thumbnail = {
         url: result.secure_url,
@@ -62,8 +57,8 @@ const uploadToCloudinary = async (req, res, next) => {
       };
     }
 
-    // 🔹 Upload Cover Image
-    if (req.files.coverImage) {
+    // ✅ Cover Image
+    if (req.files.coverImage?.[0]) {
       const result = await uploadSingle(req.files.coverImage[0].buffer);
       uploadedFiles.coverImage = {
         url: result.secure_url,
@@ -75,8 +70,10 @@ const uploadToCloudinary = async (req, res, next) => {
 
     next();
   } catch (error) {
+    console.error("UPLOAD ERROR:", error);
     error.statusCode = error.statusCode || 500;
     next(error);
   }
 };
+
 export { upload, uploadToCloudinary };

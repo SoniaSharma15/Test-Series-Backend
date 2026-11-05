@@ -1,6 +1,7 @@
 import express from "express";
 import {
   createOrder,
+  enrollInFreeSeries,
   verifyPayment,
   getPaymentHistory,
   downloadReceipt
@@ -24,6 +25,13 @@ router.post(
   protect,
   authorizeRole("student"),
   createOrder
+);
+
+router.post(
+  "/free-enroll",
+  protect,
+  authorizeRole("student"),
+  enrollInFreeSeries
 );
 
 router.post(

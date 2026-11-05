@@ -19,7 +19,7 @@ const enrollmentSchema = new mongoose.Schema(
     // 🔹 Who created this enrollment?
     source: {
       type: String,
-      enum: ["payment", "admin"],
+      enum: ["payment", "admin", "free"],
       default: "payment",
     },
 

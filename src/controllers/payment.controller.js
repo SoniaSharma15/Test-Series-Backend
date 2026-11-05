@@ -164,6 +164,83 @@ export const createOrder = async (req, res, next) => {
   }
 };
 
+export const enrollInFreeSeries = async (req, res, next) => {
+  try {
+    const { testSeriesId } = req.body;
+    const studentId = req.user?._id;
+
+    if (!studentId) {
+      const err = new Error("Unauthorized");
+      err.statusCode = 401;
+      throw err;
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(testSeriesId)) {
+      const err = new Error("Invalid TestSeriesId");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const testSeries = await TestSeries.findById(testSeriesId);
+    if (!testSeries) {
+      const err = new Error("Test series not found");
+      err.statusCode = 404;
+      throw err;
+    }
+
+    if (Number(testSeries.price) !== 0) {
+      const err = new Error("This test series is not free. Continue with payment.");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    if (testSeries.offerExpiry && new Date(testSeries.offerExpiry) < new Date()) {
+      const err = new Error("Offer has expired");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const alreadyEnrolled = await Enrollment.findOne({ studentId, testSeriesId });
+    if (alreadyEnrolled) {
+      const err = new Error("Already enrolled in this test series");
+      err.statusCode = 409;
+      throw err;
+    }
+
+    const expiryDate = new Date();
+    expiryDate.setDate(expiryDate.getDate() + testSeries.duration);
+
+    try {
+      await Enrollment.create({
+        studentId,
+        testSeriesId,
+        source: "free",
+        amount: 0,
+        status: "active",
+        expiryDate,
+      });
+    } catch (error) {
+      if (error.code === 11000) {
+        const conflict = new Error("Already enrolled in this test series");
+        conflict.statusCode = 409;
+        throw conflict;
+      }
+      throw error;
+    }
+
+    await TestSeries.findByIdAndUpdate(testSeriesId, {
+      $inc: { totalEnrollments: 1 },
+    });
+
+    res.status(201).json({
+      success: true,
+      message: "Free enrollment successful",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 
 export const verifyPayment = async (req, res, next) => {
   try {
@@ -587,9 +664,9 @@ export const downloadReceipt = async (req, res) => {
       doc.image(logoPath, 50, 60, { width: 60 });
     } catch (e) {}
 
-    doc.fillColor(DEEP_NAVY).fontSize(22).font("Helvetica-Bold").text("THE BRILLIANT BIHAR", 130, 65);
+    doc.fillColor(DEEP_NAVY).fontSize(22).font("Helvetica-Bold").text("TEST SERIES PORTAL", 130, 65);
     doc.fontSize(9).font("Helvetica").fillColor(TEXT_LIGHT).text("An Institute for UPSC, BPSC & other PCS Exams", 130, 90);
-    doc.fontSize(8).text("Regd Office: Patna, Bihar | Contact: support@thebrilliantbihar.com", 130, 102);
+    doc.fontSize(8).text("Contact: support@testseries.com", 130, 102);
 
     // 3. INVOICE TYPE BADGE
     doc.rect(430, 65, 120, 20).fill("#f1f5f9");
@@ -673,7 +750,7 @@ doc.text(`Transaction ID: ${payment.paymentId}`, 70, 272);
     // 9. SIGNATURE SECTION
     const sigY = 620;
     doc.fillColor(TEXT_MAIN).fontSize(8).font("Helvetica-Bold").text("Digitally Signed By:", 460, sigY);
-    doc.fontSize(9).text("The Brilliant Bihar", 460, sigY + 15);
+    doc.fontSize(9).text("Test Series Portal", 460, sigY + 15);
     doc.fontSize(7).font("Helvetica").fillColor(TEXT_LIGHT).text("Authorized Signatory", 460, sigY + 28);
 
     // 10. TERMS & CONDITIONS
@@ -702,4 +779,3 @@ doc.text(`Transaction ID: ${payment.paymentId}`, 70, 272);
     if (!res.headersSent) res.status(500).json({ message: "Invoice generation failed" });
   }
 };
-
